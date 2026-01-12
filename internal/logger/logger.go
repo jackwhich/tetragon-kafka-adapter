@@ -2,6 +2,7 @@ package logger
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
@@ -111,6 +112,17 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 
 	// 文件输出（仅在未开启 Kafka 时输出）
 	if shouldOutputToFile {
+		// 确保日志文件目录存在（lumberjack 会在写入时创建，但提前创建可以避免权限问题）
+		logDir := filepath.Dir(cfg.File.Path)
+		if logDir != "" && logDir != "." {
+			// 尝试创建目录，如果失败不影响初始化（lumberjack 会在写入时再次尝试）
+			// 但提前创建可以避免第一次写入时的延迟和潜在错误
+			if err := os.MkdirAll(logDir, 0755); err != nil {
+				// 如果创建目录失败，lumberjack 会在第一次写入时再次尝试
+				// 这里不返回错误，让 lumberjack 自己处理
+			}
+		}
+		
 		fileWriter := &lumberjack.Logger{
 			Filename:   cfg.File.Path,
 			MaxSize:    cfg.File.MaxSizeMB, // MB
