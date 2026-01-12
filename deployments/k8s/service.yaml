@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tetragon-kafka-adapter
+  namespace: kube-system
+  labels:
+    app: tetragon-kafka-adapter
+spec:
+  type: ClusterIP
+  ports:
+  - name: health
+    port: 8080
+    targetPort: 8080
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  selector:
+    app: tetragon-kafka-adapter

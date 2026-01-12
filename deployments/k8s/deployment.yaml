@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tetragon-kafka-adapter
+  namespace: kube-system
+  labels:
+    app: tetragon-kafka-adapter
+spec:
+  replicas: 3  # 多副本，使用方案 1（Kafka Compacted Topic）自动去重
+  selector:
+    matchLabels:
+      app: tetragon-kafka-adapter
+  template:
+    metadata:
+      labels:
+        app: tetragon-kafka-adapter
+    spec:
+      containers:
+      - name: adapter
+        image: your-registry/tetragon-kafka-adapter:latest
+        imagePullPolicy: Always
+        env:
+        - name: TETRAGON_GRPC_ADDR
+          value: "tetragon.kube-system.svc:54321"
+        - name: KAFKA_BROKERS
+          value: "kafka-0.kafka:9092,kafka-1.kafka:9092"
+        - name: KAFKA_CLIENT_ID
+          value: "tetragon-kafka-adapter"
+        - name: KAFKA_TOPIC_AUTO_CREATE
+          value: "true"
+        - name: KAFKA_TOPIC_CLEANUP_POLICY
+          value: "compact"
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: health
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090

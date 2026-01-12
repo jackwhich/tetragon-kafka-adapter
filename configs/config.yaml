@@ -1,0 +1,88 @@
+# Tetragon gRPC 连接配置
+tetragon:
+  grpc_addr: "tetragon.kube-system.svc:54321"
+  tls:
+    enabled: false
+    ca_cert: "/etc/tetragon/ca.crt"
+    client_cert: "/etc/tetragon/client.crt"
+    client_key: "/etc/tetragon/client.key"
+  stream:
+    max_queue: 50000
+    drop_if_queue_full: true
+    sample_ratio: 1.0
+    reconnect:
+      initial_backoff_seconds: 1
+      max_backoff_seconds: 30
+      jitter: true
+
+# Kafka 配置
+kafka:
+  brokers: ["kafka-0.kafka:9092","kafka-1.kafka:9092"]
+  client_id: "tetragon-consumer"
+  acks: "all"  # all / 1 / 0
+  compression: "snappy"  # none / gzip / snappy / lz4 / zstd
+  max_message_bytes: 1048576  # 1MB
+  batch:
+    max_messages: 3000
+    max_bytes: 1048576
+    flush_interval_ms: 100
+  writer_workers: 12
+  tls:
+    enabled: false
+    ca_cert: "/etc/kafka/ca.crt"
+    client_cert: "/etc/kafka/client.crt"
+    client_key: "/etc/kafka/client.key"
+  sasl:
+    enabled: false
+    mechanism: "PLAIN"  # PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512
+    username: "tetragon-consumer"
+    password_file: "/etc/kafka/password"
+  topic_admin:
+    auto_create: true
+    partitions: 24
+    replication_factor: 3
+    cleanup_policy: "compact"  # ⭐ 关键：启用 log compaction，自动去重（方案 1）
+    min_cleanable_dirty_ratio: "0.5"
+    retention_ms: 604800000  # 7 days
+  producer:
+    enable_idempotence: true  # ⭐ 关键：启用幂等性（防止网络重试重复）
+
+# 路由配置
+routing:
+  topics:
+    process_exec: "tetragon.process.exec"
+    process_exit: "tetragon.process.exit"
+    process_lsm: "tetragon.security.lsm"
+    process_kprobe: "tetragon.syscall.kprobe"
+    process_tracepoint: "tetragon.kernel.tracepoint"
+    unknown: "tetragon.unknown"
+    dlq: "tetragon.dlq"
+  partition_key:
+    mode: "deduplication"  # ⭐ 关键：用于去重的 key 模式（配合 Compacted Topic）
+    fields: ["node", "type", "process.pid", "timestamp"]  # 生成唯一 key
+    separator: ":"
+
+# Schema 配置
+schema:
+  version: 1
+  mode: "stable_json"  # stable_json / raw_string_fallback
+  include_raw: false  # 是否在 JSON 中包含原始 protobuf bytes
+
+# 日志配置
+logger:
+  level: "info"  # debug / info / warn / error
+  format: "json"  # json / text
+  output: "stdout"  # stdout / file
+  file:
+    path: "/var/log/consumer.log"
+    max_size_mb: 100
+    max_backups: 5
+    max_age_days: 7
+
+# 监控配置
+monitoring:
+  enabled: true
+  health_port: 8080
+  metrics_port: 9090
+  pprof_enabled: false
+  pprof_port: 6060
