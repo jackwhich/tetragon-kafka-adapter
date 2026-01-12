@@ -161,55 +161,7 @@ func main() {
 		}
 	}
 
-	// 创建 Kafka Producer
-	// ⚠️ 注意：如果 Kafka Producer 创建失败，应用会退出，健康检查服务器不会启动
-	log.Info("正在创建 Kafka Producer...", zap.Strings("代理", cfg.Kafka.Brokers))
-	_ = log.Sync() // 立即刷新日志
-	producer, err := kafka.NewProducer(&cfg.Kafka, log)
-	if err != nil {
-		// 如果 Kafka 连接失败，记录错误但不立即退出，先启动健康检查服务器
-		log.Error("创建 Kafka Producer 失败，但继续启动其他组件",
-			zap.Error(err),
-			zap.String("提示", "应用将继续运行，但无法写入 Kafka。请检查 Kafka broker 连接。"))
-		// 不设置 producer，后续代码会检查 producer 是否为 nil
-		producer = nil
-	} else {
-		defer producer.Close()
-		log.Info("Kafka Producer 创建成功")
-		_ = log.Sync() // 立即刷新日志
-	}
-
-	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
-	if hasKafkaLog && cfg.Logger.Kafka.Enabled {
-		log.Info("重新初始化 logger，启用 Kafka 日志输出",
-			zap.String("kafka主题", cfg.Logger.Kafka.Topic),
-			zap.Bool("console日志", cfg.Logger.Console.Enabled))
-		if err := logger.Init(&cfg.Logger, producer); err != nil {
-			log.Warn("重新初始化 logger 失败，继续使用文件日志", zap.Error(err))
-		} else {
-			log = logger.GetLogger()
-			// 立即刷新日志，确保 console 输出能立即看到
-			if cfg.Logger.Console.Enabled {
-				_ = log.Sync() // 忽略错误，只是尝试刷新
-			}
-			log.Info("Logger 已重新初始化，Kafka 日志输出已启用",
-				zap.Bool("console日志", cfg.Logger.Console.Enabled))
-		}
-	}
-
-	// 创建 Kafka Writer（只有在 Producer 创建成功时才创建）
-	var writer *kafka.Writer
-	if producer != nil {
-		writer = kafka.NewWriter(producer, r, &cfg.Kafka, log)
-		writer.Start(ctx)
-		log.Info("Kafka Writer 已启动")
-	} else {
-		log.Warn("Kafka Producer 未创建，跳过 Writer 初始化")
-		writer = nil
-	}
-	// 注意：writer.Close() 应该在优雅关闭时调用，而不是在 defer 中
-	// 因为需要先关闭 channel，然后等待 workers 完成
-
+	// ⚠️ 重要：先启动健康检查服务器，确保即使后续组件失败，健康检查也能工作
 	// 启动健康检查服务器（启动时不就绪）
 	var healthServer *health.Server
 	var metricsServer *http.Server
@@ -271,6 +223,55 @@ func main() {
 		time.Sleep(500 * time.Millisecond) // 增加等待时间，确保服务器已启动
 		_ = log.Sync() // 立即刷新日志
 	}
+
+	// 创建 Kafka Producer（在健康检查服务器启动之后）
+	// ⚠️ 注意：如果 Kafka Producer 创建失败，应用会继续运行，健康检查服务器已启动
+	log.Info("正在创建 Kafka Producer...", zap.Strings("代理", cfg.Kafka.Brokers))
+	_ = log.Sync() // 立即刷新日志
+	producer, err := kafka.NewProducer(&cfg.Kafka, log)
+	if err != nil {
+		// 如果 Kafka 连接失败，记录错误但不立即退出，先启动健康检查服务器
+		log.Error("创建 Kafka Producer 失败，但继续启动其他组件",
+			zap.Error(err),
+			zap.String("提示", "应用将继续运行，但无法写入 Kafka。请检查 Kafka broker 连接。"))
+		// 不设置 producer，后续代码会检查 producer 是否为 nil
+		producer = nil
+	} else {
+		defer producer.Close()
+		log.Info("Kafka Producer 创建成功")
+		_ = log.Sync() // 立即刷新日志
+	}
+
+	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
+	if hasKafkaLog && cfg.Logger.Kafka.Enabled {
+		log.Info("重新初始化 logger，启用 Kafka 日志输出",
+			zap.String("kafka主题", cfg.Logger.Kafka.Topic),
+			zap.Bool("console日志", cfg.Logger.Console.Enabled))
+		if err := logger.Init(&cfg.Logger, producer); err != nil {
+			log.Warn("重新初始化 logger 失败，继续使用文件日志", zap.Error(err))
+		} else {
+			log = logger.GetLogger()
+			// 立即刷新日志，确保 console 输出能立即看到
+			if cfg.Logger.Console.Enabled {
+				_ = log.Sync() // 忽略错误，只是尝试刷新
+			}
+			log.Info("Logger 已重新初始化，Kafka 日志输出已启用",
+				zap.Bool("console日志", cfg.Logger.Console.Enabled))
+		}
+	}
+
+	// 创建 Kafka Writer（只有在 Producer 创建成功时才创建）
+	var writer *kafka.Writer
+	if producer != nil {
+		writer = kafka.NewWriter(producer, r, &cfg.Kafka, log)
+		writer.Start(ctx)
+		log.Info("Kafka Writer 已启动")
+	} else {
+		log.Warn("Kafka Producer 未创建，跳过 Writer 初始化")
+		writer = nil
+	}
+	// 注意：writer.Close() 应该在优雅关闭时调用，而不是在 defer 中
+	// 因为需要先关闭 channel，然后等待 workers 完成
 
 	// 启动 gRPC 事件读取器
 	reconnectMgr := grpc.NewReconnectManager(grpcClient, cfg, log)
