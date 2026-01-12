@@ -15,13 +15,16 @@ spec:
       labels:
         app: tetragon-kafka-adapter
     spec:
+      # ⚠️ 重要：必须启用 hostNetwork 才能连接到 Tetragon 的 localhost:54321
+      # 因为 Tetragon 使用 hostNetwork: true，监听在节点级别的 localhost:54321
+      hostNetwork: true
       containers:
       - name: adapter
         image: your-registry/tetragon-kafka-adapter:latest
         imagePullPolicy: Always
         env:
         - name: TETRAGON_GRPC_ADDR
-          value: "tetragon.kube-system.svc:54321"
+          value: "localhost:54321"  # 使用 localhost，因为 adapter 也启用了 hostNetwork
         - name: KAFKA_BROKERS
           value: "kafka-0.kafka:9092,kafka-1.kafka:9092"
         - name: KAFKA_CLIENT_ID

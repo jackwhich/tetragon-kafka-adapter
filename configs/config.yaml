@@ -1,6 +1,8 @@
 # Tetragon gRPC 连接配置
+# ⚠️ 注意：由于 Tetragon 使用 hostNetwork: true，监听在 localhost:54321
+# adapter 也需要使用 hostNetwork 才能连接，所以使用 localhost:54321
 tetragon:
-  grpc_addr: "tetragon.kube-system.svc:54321"
+  grpc_addr: "localhost:54321"
   tls:
     enabled: false
     ca_cert: "/etc/tetragon/ca.crt"
