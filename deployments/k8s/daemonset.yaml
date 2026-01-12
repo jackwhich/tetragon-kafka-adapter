@@ -22,13 +22,14 @@ spec:
       #   - 不会出现端口冲突（DaemonSet 保证每个节点只有一个 Pod）
       #   - 不会出现重复事件（每个节点事件只被接收一次）
       hostNetwork: true
-      # 可选：如果 DNS 解析不稳定，可以添加 hostAliases
-      # hostAliases:
-      # - ip: "172.30.32.85"
-      #   hostnames:
-      #   - "kafka-0.kafka.test-ebpay-mid.svc.cluster.local"
-      #   - "kafka-1.kafka.test-ebpay-mid.svc.cluster.local"
-      #   - "kafka-2.kafka.test-ebpay-mid.svc.cluster.local"
+      # ⚠️ 使用 hostNetwork 时，必须配置 hostAliases，因为 Pod 使用宿主机的 /etc/hosts
+      # 如果宿主机没有这些 DNS 映射，Pod 也无法解析
+      hostAliases:
+      - ip: "172.30.32.85"
+        hostnames:
+        - "kafka-0.kafka.test-ebpay-mid.svc.cluster.local"
+        - "kafka-1.kafka.test-ebpay-mid.svc.cluster.local"
+        - "kafka-2.kafka.test-ebpay-mid.svc.cluster.local"
       containers:
       - name: adapter
         image: harbor.dcops.cc/library/tetragon-kafka-adapter:0.1.0
