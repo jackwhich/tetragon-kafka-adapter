@@ -41,18 +41,36 @@ func (n *EventNormalizer) Normalize(event *tetragon.GetEventsResponse) (*v1.Even
 	schema.Node = getEventNode(event)
 	
 	// 将完整的原始事件序列化为 JSON 并放入 Raw 字段
+	// 使用与 Tetragon 官方相同的序列化选项，确保格式完全一致
 	// 这样 Logstash 可以提取任何需要的信息，包括所有网络连接细节、Pod 信息等
 	rawJSON, err := protojson.MarshalOptions{
-		UseProtoNames: true, // 使用 snake_case 字段名，保持与 Tetragon 官方格式一致
-		EmitUnpopulated: true, // 包含所有字段，即使为空
+		UseProtoNames:     true,  // 使用 snake_case 字段名，保持与 Tetragon 官方格式一致
+		EmitUnpopulated:   true,  // 包含所有字段，即使为空
+		EmitDefaultValues: true,  // 包含默认值
+		UseEnumNumbers:    false, // 使用枚举名称而不是数字
 	}.Marshal(event)
 	if err == nil {
+		// 将 JSON 字节解析为 map，保留完整的嵌套结构
 		var rawMap map[string]interface{}
 		if err := json.Unmarshal(rawJSON, &rawMap); err == nil {
+			// 直接使用解析后的 map，保留所有原始数据
 			schema.Raw = rawMap
 		} else {
-			// 如果解析失败，直接使用 JSON 字符串
+			// 如果解析失败，记录错误但继续处理
+			if n.logger != nil {
+				n.logger.Warn("无法解析原始事件 JSON",
+					zap.Error(err),
+					zap.String("event_type", eventType))
+			}
+			// 作为备用，直接使用 JSON 字符串
 			schema.Raw = string(rawJSON)
+		}
+	} else {
+		// 如果序列化失败，记录错误
+		if n.logger != nil {
+			n.logger.Error("无法序列化原始事件",
+				zap.Error(err),
+				zap.String("event_type", eventType))
 		}
 	}
 	
