@@ -1,5 +1,5 @@
 # 多阶段构建
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
@@ -23,10 +23,8 @@ WORKDIR /app
 # 从构建阶段复制二进制文件
 COPY --from=builder /build/tetragon-kafka-adapter .
 
-# 复制配置文件
-COPY configs/config.yaml /app/config.yaml
-
 EXPOSE 8080 9090
 
+# 注意：配置文件通过 ConfigMap 挂载到 /etc/tetragon-kafka-adapter/config.yaml
 ENTRYPOINT ["./tetragon-kafka-adapter"]
-CMD ["-config", "/app/config.yaml"]
+CMD ["-config", "/etc/tetragon-kafka-adapter/config.yaml"]
