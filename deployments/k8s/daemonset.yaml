@@ -27,18 +27,6 @@ spec:
         image: your-registry/tetragon-kafka-adapter:latest
         imagePullPolicy: Always
         env:
-        - name: TETRAGON_GRPC_ADDR
-          value: "localhost:54321"  # 每个节点连接到本节点的 Tetragon
-        - name: KAFKA_BROKERS
-          value: "kafka-0.kafka:9092,kafka-1.kafka:9092"
-        - name: KAFKA_CLIENT_ID
-          value: "tetragon-kafka-adapter"
-        - name: KAFKA_TOPIC_AUTO_CREATE
-          value: "true"
-        - name: KAFKA_TOPIC_CLEANUP_POLICY
-          value: "compact"
-        - name: LOG_LEVEL
-          value: "info"
         # Kubernetes 元数据（用于日志中）
         - name: POD_NAME
           valueFrom:
@@ -60,6 +48,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/tetragon-kafka-adapter
+          readOnly: true
         resources:
           # 资源请求（Guaranteed）
           requests:
@@ -86,3 +78,7 @@ spec:
           containerPort: 8080
         - name: metrics
           containerPort: 9090
+      volumes:
+      - name: config
+        configMap:
+          name: tetragon-kafka-adapter-config
