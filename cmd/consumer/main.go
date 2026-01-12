@@ -184,7 +184,7 @@ func main() {
 				zap.Int("端口", cfg.Monitoring.HealthPort),
 				zap.String("地址", fmt.Sprintf(":%d", cfg.Monitoring.HealthPort)))
 			_ = log.Sync() // 立即刷新日志
-			if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
+			if err = healthServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Error("健康检查服务器错误", zap.Error(err))
 			} else {
 				log.Info("健康检查服务器已启动并监听",
@@ -213,7 +213,7 @@ func main() {
 				}
 			}()
 			log.Info("正在启动指标服务器", zap.Int("端口", cfg.Monitoring.MetricsPort))
-			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err = metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Error("指标服务器错误", zap.Error(err))
 			}
 		}()
