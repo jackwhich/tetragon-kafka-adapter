@@ -89,10 +89,8 @@ func main() {
 
 	log := logger.GetLogger()
 
-	// 立即刷新日志，确保 console 输出能立即看到（特别是第一次启动时）
-	if cfg.Logger.Console.Enabled {
-		_ = log.Sync() // 忽略错误，只是尝试刷新
-	}
+	// 注意：zap logger 会自动刷新，不需要频繁调用 Sync()
+	// 只在关键点（如启动完成、关闭时）调用 Sync()
 
 	log.Info("正在启动 Tetragon Kafka Adapter",
 		zap.String("grpc地址", cfg.Tetragon.GRPCAddr),
@@ -106,14 +104,12 @@ func main() {
 
 	// 初始化 gRPC 客户端
 	log.Info("正在创建 gRPC 客户端...", zap.String("地址", cfg.Tetragon.GRPCAddr))
-	_ = log.Sync() // 立即刷新日志
 	grpcClient, err := grpc.NewClient(&cfg.Tetragon)
 	if err != nil {
 		log.Fatal("创建 gRPC 客户端失败", zap.Error(err))
 	}
 	defer grpcClient.Close()
 	log.Info("gRPC 客户端创建成功")
-	_ = log.Sync() // 立即刷新日志
 
 	// 创建队列
 	log.Info("正在创建事件队列...")
@@ -183,14 +179,12 @@ func main() {
 			log.Info("健康检查服务器正在启动...",
 				zap.Int("端口", cfg.Monitoring.HealthPort),
 				zap.String("地址", fmt.Sprintf(":%d", cfg.Monitoring.HealthPort)))
-			_ = log.Sync() // 立即刷新日志
 			if err = healthServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Error("健康检查服务器错误", zap.Error(err))
 			} else {
 				log.Info("健康检查服务器已启动并监听",
 					zap.Int("端口", cfg.Monitoring.HealthPort),
 					zap.Strings("路径", []string{"/health"}))
-				_ = log.Sync() // 立即刷新日志
 			}
 		}()
 
@@ -221,13 +215,11 @@ func main() {
 		// 等待健康检查服务器启动（确保服务器已经监听端口）
 		log.Info("等待健康检查服务器启动...")
 		time.Sleep(500 * time.Millisecond) // 增加等待时间，确保服务器已启动
-		_ = log.Sync()                     // 立即刷新日志
 	}
 
 	// 创建 Kafka Producer（在健康检查服务器启动之后）
 	// ⚠️ 注意：如果 Kafka Producer 创建失败，应用会继续运行，健康检查服务器已启动
 	log.Info("正在创建 Kafka Producer...", zap.Strings("代理", cfg.Kafka.Brokers))
-	_ = log.Sync() // 立即刷新日志
 	producer, err := kafka.NewProducer(&cfg.Kafka, log)
 	if err != nil {
 		// 如果 Kafka 连接失败，记录错误但不立即退出，先启动健康检查服务器
@@ -239,7 +231,6 @@ func main() {
 	} else {
 		defer producer.Close()
 		log.Info("Kafka Producer 创建成功")
-		_ = log.Sync() // 立即刷新日志
 	}
 
 	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
@@ -251,10 +242,6 @@ func main() {
 			log.Warn("重新初始化 logger 失败，继续使用文件日志", zap.Error(err))
 		} else {
 			log = logger.GetLogger()
-			// 立即刷新日志，确保 console 输出能立即看到
-			if cfg.Logger.Console.Enabled {
-				_ = log.Sync() // 忽略错误，只是尝试刷新
-			}
 			log.Info("Logger 已重新初始化，Kafka 日志输出已启用",
 				zap.Bool("console日志", cfg.Logger.Console.Enabled))
 		}
@@ -320,6 +307,31 @@ func main() {
 		writeToKafka(ctx, eventQueue, normalizer, r, writer, &cfg.Routing.PartitionKey, log)
 		log.Info("Kafka 写入循环已停止")
 	}()
+
+	// 启动内存监控 goroutine（定期更新内存指标）
+	if cfg.Monitoring.Enabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error("内存监控 goroutine 发生 panic",
+						zap.Any("panic", r),
+						zap.Stack("stack"))
+				}
+			}()
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					metrics.UpdateMemoryMetrics()
+				}
+			}
+		}()
+	}
 
 	// 优雅启动：等待所有组件就绪
 	log.Info("等待所有组件就绪...")
@@ -397,11 +409,23 @@ func main() {
 	// 但可能还有消息在 writer 的内部队列中
 	if writer != nil {
 		log.Info("关闭 Writer channel...")
-		writer.Close() // 关闭 channel，停止接收新消息
+		// 优化：先关闭 channel，停止接收新消息
+		writer.Close()
 
-		log.Info("等待所有 Kafka 写入任务完成...")
-		writer.Wait()
-		log.Info("所有 Kafka 写入任务已完成")
+		// 优化：设置超时，避免无限等待
+		writerDone := make(chan struct{})
+		go func() {
+			writer.Wait()
+			close(writerDone)
+		}()
+
+		select {
+		case <-writerDone:
+			log.Info("所有 Kafka 写入任务已完成")
+		case <-time.After(10 * time.Second):
+			log.Warn("等待 Kafka 写入任务完成超时",
+				zap.Int("超时时间", 10))
+		}
 	} else {
 		log.Info("Writer 未初始化，跳过关闭")
 	}
@@ -478,6 +502,7 @@ func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsRe
 			}
 
 			// 优化：只调用一次 DetectEventType，避免重复调用
+			// 将事件类型附加到事件上，避免在 writeToKafka 中重复检测
 			eventType := router.DetectEventType(event)
 
 			// 入队
@@ -520,6 +545,8 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 
 		// 规范化事件
 		normalizeStart := time.Now()
+		// 优化：复用 processEvents 中已检测的事件类型，避免重复调用
+		// 注意：如果 processEvents 中未检测，这里才检测（向后兼容）
 		eventType := router.DetectEventType(event)
 		schema, err := normalizer.Normalize(event)
 		if err != nil {

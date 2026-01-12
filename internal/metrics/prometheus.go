@@ -1,6 +1,9 @@
 package metrics
 
 import (
+	"runtime"
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -239,4 +242,113 @@ var (
 		},
 		[]string{"topic"},
 	)
+
+	// 内存监控指标
+	MemoryAllocBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "memory_alloc_bytes",
+			Help: "Number of bytes allocated and still in use",
+		},
+	)
+
+	MemoryTotalAllocBytes = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "memory_total_alloc_bytes_total",
+			Help: "Total number of bytes allocated (even if freed)",
+		},
+	)
+
+	MemorySysBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "memory_sys_bytes",
+			Help: "Number of bytes obtained from system",
+		},
+	)
+
+	MemoryNumGC = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "memory_num_gc_total",
+			Help: "Total number of GC cycles",
+		},
+	)
+
+	MemoryHeapAllocBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "memory_heap_alloc_bytes",
+			Help: "Number of heap bytes allocated and still in use",
+		},
+	)
+
+	MemoryHeapSysBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "memory_heap_sys_bytes",
+			Help: "Number of heap bytes obtained from system",
+		},
+	)
+
+	MemoryHeapInuseBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "memory_heap_inuse_bytes",
+			Help: "Number of heap bytes in use",
+		},
+	)
+
+	MemoryHeapIdleBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "memory_heap_idle_bytes",
+			Help: "Number of heap bytes idle",
+		},
+	)
+
+	NumGoroutines = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "num_goroutines",
+			Help: "Number of goroutines that currently exist",
+		},
+	)
 )
+
+var (
+	// 用于跟踪上次的内存统计值，以便计算增量
+	lastMemStats     runtime.MemStats
+	lastMemStatsOnce sync.Once
+	lastMemStatsMu   sync.Mutex
+)
+
+// UpdateMemoryMetrics 更新内存指标（应该定期调用，例如每 10 秒）
+// 注意：TotalAlloc 和 NumGC 是累计值，需要计算增量
+func UpdateMemoryMetrics() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	MemoryAllocBytes.Set(float64(m.Alloc))
+	MemorySysBytes.Set(float64(m.Sys))
+	MemoryHeapAllocBytes.Set(float64(m.HeapAlloc))
+	MemoryHeapSysBytes.Set(float64(m.HeapSys))
+	MemoryHeapInuseBytes.Set(float64(m.HeapInuse))
+	MemoryHeapIdleBytes.Set(float64(m.HeapIdle))
+	NumGoroutines.Set(float64(runtime.NumGoroutine()))
+
+	// 对于 Counter 类型的指标，需要计算增量
+	lastMemStatsMu.Lock()
+	defer lastMemStatsMu.Unlock()
+
+	// 初始化 lastMemStats（第一次调用时）
+	lastMemStatsOnce.Do(func() {
+		lastMemStats = m
+		// 第一次调用时，直接设置初始值（不增加，因为这是累计值）
+		// 注意：Counter 从 0 开始，所以第一次不需要 Add
+		return
+	})
+
+	// 计算增量并更新 Counter
+	if m.TotalAlloc > lastMemStats.TotalAlloc {
+		MemoryTotalAllocBytes.Add(float64(m.TotalAlloc - lastMemStats.TotalAlloc))
+	}
+	if m.NumGC > lastMemStats.NumGC {
+		MemoryNumGC.Add(float64(m.NumGC - lastMemStats.NumGC))
+	}
+
+	// 更新上次的值
+	lastMemStats = m
+}

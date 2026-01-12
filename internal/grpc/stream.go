@@ -14,9 +14,10 @@ import (
 
 // Stream gRPC 流管理器
 type Stream struct {
-	client *Client
-	config *config.Config
-	logger *zap.Logger
+	client         *Client
+	config         *config.Config
+	logger         *zap.Logger
+	lastDropLogTime time.Time // 用于限流日志，避免日志洪水
 }
 
 // NewStream 创建新的 Stream
@@ -74,6 +75,7 @@ func (s *Stream) ReadEvents(ctx context.Context, eventCh chan<- *tetragon.GetEve
 		metrics.GrpcStreamUptimeSeconds.Set(time.Since(streamStartTime).Seconds())
 
 		// 性能优化：使用非阻塞发送，如果 channel 满则记录警告
+		// 优化：限制日志频率，避免日志洪水
 		select {
 		case eventCh <- event:
 		case <-ctx.Done():
@@ -82,9 +84,15 @@ func (s *Stream) ReadEvents(ctx context.Context, eventCh chan<- *tetragon.GetEve
 		default:
 			// Channel 已满，记录警告和指标但继续处理（由队列层处理背压）
 			metrics.DropsTotal.WithLabelValues("stream_channel_full").Inc()
-			s.logger.Warn("事件通道已满，可能影响性能",
-				zap.Int("通道容量", cap(eventCh)),
-				zap.Int("通道当前长度", len(eventCh)))
+			// 优化：使用限流日志，避免日志洪水（每 10 秒最多记录一次）
+			// 注意：这里使用简单的限流，如果需要更精确的限流可以使用更复杂的机制
+			now := time.Now()
+			if s.lastDropLogTime.IsZero() || now.Sub(s.lastDropLogTime) > 10*time.Second {
+				s.logger.Warn("事件通道已满，可能影响性能",
+					zap.Int("通道容量", cap(eventCh)),
+					zap.Int("通道当前长度", len(eventCh)))
+				s.lastDropLogTime = now
+			}
 		}
 	}
 }

@@ -80,6 +80,9 @@ func (w *Writer) worker(ctx context.Context, id int) {
 	metricsTicker := time.NewTicker(100 * time.Millisecond)
 	defer metricsTicker.Stop()
 
+	// 优化：使用预分配的 batch slice，减少内存分配
+	// 注意：batch 会在每次 flush 后重置为 batch[:0]，底层数组会保留
+	// 这样可以减少内存分配，但需要注意内存使用
 	batch := make([]*Message, 0, w.config.Batch.MaxMessages)
 	
 	for {
@@ -120,6 +123,7 @@ func (w *Writer) worker(ctx context.Context, id int) {
 			// 达到批处理大小，立即刷新
 			if len(batch) >= w.config.Batch.MaxMessages {
 				w.flushBatch(ctx, batch)
+				// 优化：重置 slice 但保留底层数组容量，减少内存分配
 				batch = batch[:0]
 			}
 			
@@ -127,7 +131,13 @@ func (w *Writer) worker(ctx context.Context, id int) {
 			// 定时刷新
 			if len(batch) > 0 {
 				w.flushBatch(ctx, batch)
-				batch = batch[:0]
+				// 优化：重置 slice 但保留底层数组容量，减少内存分配
+				// 如果 batch 增长过大（超过 MaxMessages 的 2 倍），重新分配以释放内存
+				if cap(batch) > w.config.Batch.MaxMessages*2 {
+					batch = make([]*Message, 0, w.config.Batch.MaxMessages)
+				} else {
+					batch = batch[:0]
+				}
 			}
 			
 		case <-metricsTicker.C:

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/cilium/tetragon/api/v1/tetragon"
@@ -17,6 +18,7 @@ type Queue struct {
 	logger      *zap.Logger
 	updateTicker *time.Ticker
 	stopCh      chan struct{}
+	wg           sync.WaitGroup // 用于等待 updateMetricsLoop goroutine 完成
 	// 使用原子操作减少锁竞争
 	lastUpdateTime int64
 }
@@ -39,6 +41,7 @@ func NewQueue(cfg *config.StreamConfig, logger *zap.Logger) *Queue {
 	}
 	
 	// 启动后台指标更新 goroutine
+	q.wg.Add(1)
 	go q.updateMetricsLoop()
 	
 	return q
@@ -46,6 +49,7 @@ func NewQueue(cfg *config.StreamConfig, logger *zap.Logger) *Queue {
 
 // updateMetricsLoop 定期更新指标（减少锁竞争）
 func (q *Queue) updateMetricsLoop() {
+	defer q.wg.Done()
 	for {
 		select {
 		case <-q.updateTicker.C:
@@ -90,10 +94,12 @@ func (q *Queue) Pop(ctx context.Context) (*tetragon.GetEventsResponse, error) {
 
 // Close 关闭队列
 func (q *Queue) Close() {
+	// 停止 ticker
 	q.updateTicker.Stop()
+	// 关闭 stopCh，通知 updateMetricsLoop 退出
 	close(q.stopCh)
-	// 注意：updateMetricsLoop goroutine 会在检测到 stopCh 关闭后自动退出
-	// 这里不需要等待，因为它是轻量级的指标更新操作
+	// 等待 updateMetricsLoop goroutine 完成，避免 goroutine 泄漏
+	q.wg.Wait()
 }
 
 // Size 获取队列当前大小

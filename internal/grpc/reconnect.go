@@ -44,19 +44,24 @@ func (rm *ReconnectManager) RunWithReconnect(ctx context.Context, eventCh chan<-
 		default:
 		}
 
-		stream := NewStream(rm.client, rm.config, rm.logger)
-
-		err := stream.ReadEvents(ctx, eventCh)
-		if err != nil {
-			metrics.GrpcConnectionStatus.Set(0) // 连接断开
-			rm.logger.Error("流错误，将重连",
-				zap.Error(err),
-				zap.Int("尝试次数", attempt))
+		// 优化：检查客户端是否有效，避免使用 nil 客户端
+		if rm.client == nil {
+			rm.logger.Error("客户端未初始化，无法创建流")
+			// 继续重连循环，等待下次重连
 		} else {
-			// 如果 ReadEvents 正常返回（非错误），说明是正常关闭
-			metrics.GrpcConnectionStatus.Set(0) // 正常关闭
-			rm.logger.Info("gRPC 事件流正常关闭")
-			return
+			stream := NewStream(rm.client, rm.config, rm.logger)
+			err := stream.ReadEvents(ctx, eventCh)
+			if err != nil {
+				metrics.GrpcConnectionStatus.Set(0) // 连接断开
+				rm.logger.Error("流错误，将重连",
+					zap.Error(err),
+					zap.Int("尝试次数", attempt))
+			} else {
+				// 如果 ReadEvents 正常返回（非错误），说明是正常关闭
+				metrics.GrpcConnectionStatus.Set(0) // 正常关闭
+				rm.logger.Info("gRPC 事件流正常关闭")
+				return
+			}
 		}
 
 		// 再次检查是否应该退出
@@ -110,6 +115,9 @@ func (rm *ReconnectManager) RunWithReconnect(ctx context.Context, eventCh chan<-
 			rm.logger.Error("重新创建客户端失败",
 				zap.String("gRPC地址", rm.config.Tetragon.GRPCAddr),
 				zap.Error(newErr))
+			// 优化：如果创建失败，保持旧客户端为 nil，下次重连时会再次尝试
+			// 注意：旧客户端已经关闭，所以这里不需要额外处理
+			rm.client = nil
 		} else {
 			rm.client = newClient
 			rm.logger.Info("客户端重新创建成功",
