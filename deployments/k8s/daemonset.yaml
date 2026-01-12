@@ -83,7 +83,7 @@ spec:
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /ready
+            path: /health
             port: 51345
             host: 127.0.0.1  # 使用 hostNetwork 时，必须指定 127.0.0.1
           initialDelaySeconds: 10

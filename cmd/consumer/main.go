@@ -189,7 +189,7 @@ func main() {
 			} else {
 				log.Info("健康检查服务器已启动并监听",
 					zap.Int("端口", cfg.Monitoring.HealthPort),
-					zap.Strings("路径", []string{"/health", "/ready"}))
+					zap.Strings("路径", []string{"/health"}))
 				_ = log.Sync() // 立即刷新日志
 			}
 		}()

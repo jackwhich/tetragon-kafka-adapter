@@ -34,7 +34,6 @@ func NewServer(port int, q *queue.Queue, logger *zap.Logger) *Server {
 
 	// 注册健康检查端点（必须在根路径之前注册，确保精确匹配）
 	mux.HandleFunc("/health", s.healthHandler)
-	mux.HandleFunc("/ready", s.readyHandler)
 	// 添加根路径处理器，用于调试（放在最后，作为 fallback）
 	mux.HandleFunc("/", s.rootHandler)
 
@@ -46,7 +45,7 @@ func NewServer(port int, q *queue.Queue, logger *zap.Logger) *Server {
 	logger.Info("健康检查服务器已创建",
 		zap.Int("端口", port),
 		zap.String("地址", fmt.Sprintf(":%d", port)),
-		zap.Strings("端点", []string{"/", "/health", "/ready"}))
+		zap.Strings("端点", []string{"/", "/health"}))
 
 	return s
 }
@@ -55,7 +54,7 @@ func NewServer(port int, q *queue.Queue, logger *zap.Logger) *Server {
 func (s *Server) Start() error {
 	s.logger.Info("正在启动健康检查服务器", 
 		zap.String("地址", s.server.Addr),
-		zap.Strings("端点", []string{"/", "/health", "/ready"}))
+		zap.Strings("端点", []string{"/", "/health"}))
 	
 	// 在 goroutine 中启动，以便可以立即返回并记录启动状态
 	listener, err := net.Listen("tcp", s.server.Addr)
@@ -66,7 +65,7 @@ func (s *Server) Start() error {
 	
 	s.logger.Info("健康检查服务器已成功监听",
 		zap.String("地址", listener.Addr().String()),
-		zap.Strings("端点", []string{"/", "/health", "/ready"}))
+		zap.Strings("端点", []string{"/", "/health"}))
 	
 	// 启动服务器
 	if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
@@ -112,7 +111,7 @@ func (s *Server) rootHandler(w http.ResponseWriter, r *http.Request) {
 	
 	status := map[string]interface{}{
 		"service": "tetragon-kafka-adapter",
-		"endpoints": []string{"/health", "/ready"},
+		"endpoints": []string{"/health"},
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 	
@@ -121,12 +120,45 @@ func (s *Server) rootHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// healthHandler 健康检查处理器
+// healthHandler 健康检查处理器（同时用于 liveness 和 readiness probe）
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("收到健康检查请求",
 		zap.String("方法", r.Method),
 		zap.String("路径", r.URL.Path),
 		zap.String("远程地址", r.RemoteAddr))
+	
+	s.mu.RLock()
+	shutdown := s.shutdown
+	ready := s.ready
+	s.mu.RUnlock()
+	
+	// 如果正在关闭，返回未就绪
+	if shutdown {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		status := map[string]interface{}{
+			"status": "shutting down",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			s.logger.Error("写入健康检查响应失败", zap.Error(err))
+		}
+		return
+	}
+	
+	// 检查服务是否标记为就绪（用于 readiness probe）
+	if !ready {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		status := map[string]interface{}{
+			"status": "not ready",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			s.logger.Error("写入健康检查响应失败", zap.Error(err))
+		}
+		return
+	}
 	
 	// 确保设置正确的 Content-Type
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -147,55 +179,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// readyHandler 就绪检查处理器
-func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
-	s.logger.Info("收到就绪检查请求",
-		zap.String("方法", r.Method),
-		zap.String("路径", r.URL.Path),
-		zap.String("远程地址", r.RemoteAddr))
-	
-	s.mu.RLock()
-	shutdown := s.shutdown
-	ready := s.ready
-	s.mu.RUnlock()
-	
-	// 如果正在关闭，返回未就绪
-	if shutdown {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if _, err := w.Write([]byte("shutting down")); err != nil {
-			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
-		}
-		return
-	}
-	
-	// 检查服务是否标记为就绪
-	if !ready {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if _, err := w.Write([]byte("not ready")); err != nil {
-			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
-		}
-		return
-	}
-	
-	// 队列未满时认为就绪
-	if s.queue.Size() < s.queue.Capacity() {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("ready")); err != nil {
-			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
-		}
-	} else {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if _, err := w.Write([]byte("not ready: queue full")); err != nil {
-			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
-		}
-	}
-}
-
-// SetReady 设置服务就绪状态
+// SetReady 设置服务就绪状态（保留此函数以备将来使用）
 func (s *Server) SetReady(ready bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
