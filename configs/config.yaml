@@ -18,8 +18,10 @@ tetragon:
       jitter: true
 
 # Kafka 配置
+# ⚠️ Kubernetes DNS 格式：pod-name.service-name.namespace 或 pod-name.namespace
+# 例如：kafka-0.kafka.test-ebpay-mid:9092 或 kafka-0.test-ebpay-mid:9092
 kafka:
-  brokers: ["kafka-0.kafka:9092","kafka-1.kafka:9092"]
+  brokers: ["kafka-0.kafka.test-ebpay-mid:9092","kafka-1.kafka.test-ebpay-mid:9093","kafka-0.kafka.test-ebpay-mid:9094"]
   client_id: "tetragon-consumer"
   acks: "all"  # all / 1 / 0
   compression: "snappy"  # none / gzip / snappy / lz4 / zstd

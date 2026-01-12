@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tetragon-kafka-adapter
-  namespace: kube-system
+  namespace: falco
   labels:
     app: tetragon-kafka-adapter
 spec:

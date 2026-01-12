@@ -25,6 +25,7 @@ COPY --from=builder /build/tetragon-kafka-adapter .
 
 EXPOSE 8080 9090
 
-# 注意：配置文件通过 ConfigMap 挂载到 /etc/tetragon-kafka-adapter/config.yaml
-ENTRYPOINT ["./tetragon-kafka-adapter"]
-CMD ["-config", "/etc/tetragon-kafka-adapter/config.yaml"]
+# 注意：配置文件通过 ConfigMap 挂载到 /app/config.yaml
+# 不要在这里复制配置文件，避免与 ConfigMap 冲突
+ENTRYPOINT ["/app/tetragon-kafka-adapter"]
+CMD ["-config", "/app/config.yaml"]

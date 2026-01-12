@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: tetragon-kafka-adapter
-  namespace: kube-system
+  namespace: falco
   labels:
     app: tetragon-kafka-adapter
 spec:
@@ -24,7 +24,7 @@ spec:
       hostNetwork: true
       containers:
       - name: adapter
-        image: your-registry/tetragon-kafka-adapter:latest
+        image: harbor.dcops.cc/library/tetragon-kafka-adapter:0.1.0
         imagePullPolicy: Always
         env:
         # Kubernetes 元数据（用于日志中）
@@ -50,17 +50,18 @@ spec:
               fieldPath: status.hostIP
         volumeMounts:
         - name: config
-          mountPath: /etc/tetragon-kafka-adapter
+          mountPath: /app/config.yaml
+          subPath: config.yaml
           readOnly: true
         resources:
           # 资源请求（Guaranteed）
           requests:
-            cpu: "500m"        # 0.5 核（最低保证）
-            memory: "512Mi"    # 512 MB（最低保证）
+            cpu: "100m"        # 0.5 核（最低保证）
+            memory: "128Mi"    # 512 MB（最低保证）
           # 资源限制（最大使用）
           limits:
-            cpu: "2000m"       # 2 核（最大限制，高负载时使用）
-            memory: "2Gi"      # 2 GB（最大限制，高负载时使用）
+            cpu: "200m"       # 2 核（最大限制，高负载时使用）
+            memory: "218Mi"      # 2 GB（最大限制，高负载时使用）
         livenessProbe:
           httpGet:
             path: /health

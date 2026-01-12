@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cilium/tetragon/api/v1/tetragon"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/grpc"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/health"
@@ -21,7 +22,6 @@ import (
 	"github.com/yourorg/tetragon-kafka-adapter/internal/normalize"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/queue"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/router"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )
 
@@ -39,7 +39,7 @@ func main() {
 	}
 
 	// 验证配置
-	if err := config.Validate(cfg); err != nil {
+	if err = config.Validate(cfg); err != nil {
 		// 配置验证失败时，输出到 stderr（此时 logger 还未初始化）
 		fmt.Fprintf(os.Stderr, "ERROR: 配置验证失败: %v\n", err)
 		os.Exit(1)
@@ -51,18 +51,18 @@ func main() {
 	tempLoggerCfg := cfg.Logger
 	hasKafkaLog := false
 	onlyKafkaOutput := false
-	
+
 	for _, output := range tempLoggerCfg.Output {
 		if output == "kafka" {
 			hasKafkaLog = true
 		}
 	}
-	
+
 	// 检查是否只配置了 Kafka 输出（没有文件输出）
 	if hasKafkaLog && len(tempLoggerCfg.Output) == 1 {
 		onlyKafkaOutput = true
 	}
-	
+
 	// 如果只配置了 Kafka 输出，第一次初始化时使用空输出（避免创建文件）
 	if onlyKafkaOutput {
 		tempLoggerCfg.Output = []string{} // 空输出，不创建文件
@@ -80,7 +80,7 @@ func main() {
 		tempLoggerCfg.Output = newOutputs
 	}
 
-	if err := logger.Init(&tempLoggerCfg, nil); err != nil {
+	if err = logger.Init(&tempLoggerCfg, nil); err != nil {
 		// Logger 初始化失败时，输出到 stderr
 		fmt.Fprintf(os.Stderr, "ERROR: 初始化 logger 失败: %v\n", err)
 		os.Exit(1)
@@ -88,12 +88,12 @@ func main() {
 	defer logger.Sync()
 
 	log := logger.GetLogger()
-	
+
 	// 立即刷新日志，确保 console 输出能立即看到（特别是第一次启动时）
 	if cfg.Logger.Console.Enabled {
 		_ = log.Sync() // 忽略错误，只是尝试刷新
 	}
-	
+
 	log.Info("正在启动 Tetragon Kafka Adapter",
 		zap.String("grpc地址", cfg.Tetragon.GRPCAddr),
 		zap.Strings("kafka代理", cfg.Kafka.Brokers),
@@ -125,9 +125,15 @@ func main() {
 	// 创建 Kafka Topic Admin（方案 1：自动创建 Compacted Topic）
 	var topicAdmin *kafka.TopicAdmin
 	if cfg.Kafka.TopicAdmin.AutoCreate {
+		log.Info("正在创建 Kafka Topic 管理员...",
+			zap.Strings("broker地址", cfg.Kafka.Brokers),
+			zap.Bool("自动创建Topic", cfg.Kafka.TopicAdmin.AutoCreate))
 		topicAdmin, err = kafka.NewTopicAdmin(cfg.Kafka.Brokers, &cfg.Kafka.TopicAdmin, log)
 		if err != nil {
-			log.Fatal("创建 Topic 管理员失败", zap.Error(err))
+			log.Fatal("创建 Topic 管理员失败",
+				zap.Strings("broker地址", cfg.Kafka.Brokers),
+				zap.Error(err),
+				zap.String("提示", "请检查：1) Kafka broker 地址是否正确 2) DNS 是否能解析 broker 主机名 3) 网络是否可达"))
 		}
 		defer topicAdmin.Close()
 
@@ -136,7 +142,7 @@ func main() {
 		for _, topic := range cfg.Routing.Topics {
 			topics = append(topics, topic)
 		}
-		if err := topicAdmin.EnsureTopics(ctx, topics); err != nil {
+		if err = topicAdmin.EnsureTopics(ctx, topics); err != nil {
 			log.Warn("确保 Topics 存在失败",
 				zap.Strings("主题列表", topics),
 				zap.Error(err))
@@ -182,7 +188,7 @@ func main() {
 	if cfg.Monitoring.Enabled {
 		healthServer = health.NewServer(cfg.Monitoring.HealthPort, eventQueue, log)
 		healthServer.SetReady(false) // 初始状态为未就绪
-		
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -205,7 +211,7 @@ func main() {
 			Addr:    fmt.Sprintf(":%d", cfg.Monitoring.MetricsPort),
 			Handler: metricsMux,
 		}
-		
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -221,7 +227,7 @@ func main() {
 				log.Error("指标服务器错误", zap.Error(err))
 			}
 		}()
-		
+
 		// 等待健康检查服务器启动
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -229,7 +235,7 @@ func main() {
 	// 启动 gRPC 事件读取器
 	reconnectMgr := grpc.NewReconnectManager(grpcClient, cfg, log)
 	grpcEventCh := make(chan *tetragon.GetEventsResponse, cfg.Tetragon.Stream.MaxQueue)
-	
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -277,7 +283,7 @@ func main() {
 	// 优雅启动：等待所有组件就绪
 	log.Info("等待所有组件就绪...")
 	time.Sleep(2 * time.Second) // 等待组件初始化
-	
+
 	// 标记服务为就绪状态
 	if healthServer != nil {
 		healthServer.SetReady(true)
@@ -288,7 +294,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigChan
-	
+
 	// 停止信号监听，避免重复处理
 	signal.Stop(sigChan)
 
@@ -350,7 +356,7 @@ func main() {
 	// 但可能还有消息在 writer 的内部队列中
 	log.Info("关闭 Writer channel...")
 	writer.Close() // 关闭 channel，停止接收新消息
-	
+
 	log.Info("等待所有 Kafka 写入任务完成...")
 	writer.Wait()
 	log.Info("所有 Kafka 写入任务已完成")
@@ -400,7 +406,7 @@ func main() {
 	} else {
 		log.Info("日志同步完成")
 	}
-	
+
 	log.Info("优雅关闭完成，程序退出")
 }
 
@@ -414,7 +420,7 @@ func getEventNodeName(event *tetragon.GetEventsResponse) string {
 }
 
 // processEvents 处理 gRPC 事件
-func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsResponse, 
+func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsResponse,
 	eventQueue *queue.Queue, sampler *queue.Sampler, log *zap.Logger) {
 	for {
 		select {
@@ -520,7 +526,7 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 
 		if err := writer.Write(msg); err != nil {
 			metrics.EventsOutTotal.WithLabelValues(topic, "failed").Inc()
-			log.Error("写入 Kafka 失败", 
+			log.Error("写入 Kafka 失败",
 				zap.String("主题", topic),
 				zap.String("消息键", key),
 				zap.Int("消息大小", len(value)),
