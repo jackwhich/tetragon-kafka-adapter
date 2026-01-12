@@ -41,26 +41,39 @@ func main() {
 		panic(err)
 	}
 
-	// 第一步：初始化基础日志（只输出到文件，因为此时还没有 Kafka Producer）
+	// 第一步：初始化基础日志
 	// 如果配置了 Kafka 日志输出，先临时禁用，等创建 Producer 后再启用
+	// 如果只配置了 Kafka 输出，第一次初始化时不创建任何输出（避免文件权限问题）
 	tempLoggerCfg := cfg.Logger
 	hasKafkaLog := false
+	onlyKafkaOutput := false
+	
 	for _, output := range tempLoggerCfg.Output {
 		if output == "kafka" {
 			hasKafkaLog = true
-			// 临时移除 kafka 输出
-			var newOutputs []string
-			for _, o := range tempLoggerCfg.Output {
-				if o != "kafka" {
-					newOutputs = append(newOutputs, o)
-				}
-			}
-			if len(newOutputs) == 0 {
-				newOutputs = []string{"file"} // 至少保留文件输出
-			}
-			tempLoggerCfg.Output = newOutputs
-			break
 		}
+	}
+	
+	// 检查是否只配置了 Kafka 输出（没有文件输出）
+	if hasKafkaLog && len(tempLoggerCfg.Output) == 1 {
+		onlyKafkaOutput = true
+	}
+	
+	// 如果只配置了 Kafka 输出，第一次初始化时使用空输出（避免创建文件）
+	if onlyKafkaOutput {
+		tempLoggerCfg.Output = []string{} // 空输出，不创建文件
+	} else {
+		// 临时移除 kafka 输出，保留其他输出（如 file）
+		var newOutputs []string
+		for _, o := range tempLoggerCfg.Output {
+			if o != "kafka" {
+				newOutputs = append(newOutputs, o)
+			}
+		}
+		if len(newOutputs) == 0 {
+			newOutputs = []string{"file"} // 至少保留文件输出
+		}
+		tempLoggerCfg.Output = newOutputs
 	}
 
 	if err := logger.Init(&tempLoggerCfg, nil); err != nil {

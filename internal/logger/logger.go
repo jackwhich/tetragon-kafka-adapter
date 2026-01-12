@@ -103,11 +103,7 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 
 	// 检查输出配置
 	outputs := cfg.Output
-	if len(outputs) == 0 {
-		// 如果没有配置，默认使用文件输出
-		outputs = []string{"file"}
-	}
-
+	
 	// 如果开启了 Kafka 日志输出，且配置了 kafka 输出，则自动禁用文件输出
 	// 这样可以避免日志重复，只输出到 Kafka
 	shouldOutputToKafka := contains(outputs, "kafka") && cfg.Kafka.Enabled && kafkaProducer != nil
@@ -132,17 +128,13 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 		cores = append(cores, kafkaCore)
 	}
 
-	// 如果没有配置任何输出，至少输出到文件（避免没有日志）
+	// 如果没有配置任何输出，且没有 Kafka Producer，使用 no-op core（避免创建文件）
+	// 这样可以支持只配置 Kafka 输出的场景，在 Producer 创建前不输出日志
 	if len(cores) == 0 {
-		fileWriter := &lumberjack.Logger{
-			Filename:   cfg.File.Path,
-			MaxSize:    100, // MB
-			MaxBackups: 5,
-			MaxAge:     7, // days
-			Compress:   true,
-		}
-		fileCore := zapcore.NewCore(encoder, zapcore.AddSync(fileWriter), enabler)
-		cores = append(cores, fileCore)
+		// 使用 no-op core，不输出任何日志（避免文件权限问题）
+		// 当 Kafka Producer 创建后，会重新初始化 logger 并启用 Kafka 输出
+		noOpCore := zapcore.NewNopCore()
+		cores = append(cores, noOpCore)
 	}
 
 	// 使用 MultiCore 组合所有输出
