@@ -27,10 +27,11 @@ data:
           jitter: true
 
     # Kafka 配置
-    # ⚠️ Kubernetes DNS 格式：pod-name.service-name.namespace 或 pod-name.namespace
-    # 例如：kafka-0.kafka.test-ebpay-mid:9092 或 kafka-0.test-ebpay-mid:9092
+    # ⚠️ Kubernetes DNS 格式：pod-name.service-name.namespace（短格式，不带 .svc.cluster.local）
+    # 例如：kafka-0.kafka-headless.test-ebpay-mid:9092 或 kafka-0.kafka.test-ebpay-mid:9092
+    # 如果使用 headless service，格式为：pod-name.service-name.namespace
     kafka:
-      brokers: ["kafka-0.kafka.test-ebpay-mid:9092","kafka-1.kafka.test-ebpay-mid:9093","kafka-0.kafka.test-ebpay-mid:9094"]
+      brokers: ["kafka-0.kafka-headless.test-ebpay-mid:9092","kafka-1.kafka-headless.test-ebpay-mid:9093","kafka-2.kafka-headless.test-ebpay-mid:9094"]
       client_id: "tetragon-consumer"
       acks: "all"  # all / 1 / 0
       compression: "snappy"  # none / gzip / snappy / lz4 / zstd
