@@ -1,8 +1,13 @@
+// Package normalize 提供 Tetragon 事件的规范化功能
+// 将 Tetragon gRPC 事件转换为统一的 JSON Schema 格式，并保留完整的原始事件数据
 package normalize
 
 import (
+	"encoding/json"
+	
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/schema/v1"
+	"google.golang.org/protobuf/encoding/protojson"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +40,23 @@ func (n *EventNormalizer) Normalize(event *tetragon.GetEventsResponse) (*v1.Even
 	}
 	schema.Node = getEventNode(event)
 	
-	// 根据事件类型调用不同的规范化函数
+	// 将完整的原始事件序列化为 JSON 并放入 Raw 字段
+	// 这样 Logstash 可以提取任何需要的信息，包括所有网络连接细节、Pod 信息等
+	rawJSON, err := protojson.MarshalOptions{
+		UseProtoNames: true, // 使用 snake_case 字段名，保持与 Tetragon 官方格式一致
+		EmitUnpopulated: true, // 包含所有字段，即使为空
+	}.Marshal(event)
+	if err == nil {
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(rawJSON, &rawMap); err == nil {
+			schema.Raw = rawMap
+		} else {
+			// 如果解析失败，直接使用 JSON 字符串
+			schema.Raw = string(rawJSON)
+		}
+	}
+	
+	// 根据事件类型调用不同的规范化函数（提取常用字段，方便查询）
 	switch eventType {
 	case "process_exec":
 		return normalizeProcessExec(event, schema)

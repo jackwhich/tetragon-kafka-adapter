@@ -17,6 +17,7 @@ type EventSchema struct {
 	Node          string                 `json:"node"`
 	K8s           *K8sInfo               `json:"k8s,omitempty"`
 	Process       *ProcessInfo           `json:"process,omitempty"`
+	Network       *NetworkInfo           `json:"network,omitempty"` // 网络连接信息
 	Labels        map[string]string      `json:"labels,omitempty"`
 	Raw           interface{}            `json:"raw,omitempty"`
 	Extra         map[string]interface{} `json:"extra,omitempty"`
@@ -27,6 +28,16 @@ type K8sInfo struct {
 	Namespace string `json:"namespace,omitempty"`
 	Pod       string `json:"pod,omitempty"`
 	Container string `json:"container,omitempty"`
+}
+
+// NetworkInfo 网络连接信息
+type NetworkInfo struct {
+	SourceIP      string `json:"source_ip,omitempty"`      // 源 IP 地址
+	SourcePort    uint32 `json:"source_port,omitempty"`    // 源端口
+	DestinationIP string `json:"destination_ip,omitempty"` // 目标 IP 地址
+	DestinationPort uint32 `json:"destination_port,omitempty"` // 目标端口
+	Protocol      string `json:"protocol,omitempty"`       // 协议 (TCP/UDP)
+	Family        string `json:"family,omitempty"`         // 地址族 (IPv4/IPv6)
 }
 
 // ProcessInfo 进程信息
