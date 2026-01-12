@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tetragon-kafka-adapter
+  namespace: kube-system
+  labels:
+    app: tetragon-kafka-adapter
+spec:
+  selector:
+    matchLabels:
+      app: tetragon-kafka-adapter
+  template:
+    metadata:
+      labels:
+        app: tetragon-kafka-adapter
+    spec:
+      # ⚠️ 重要：必须启用 hostNetwork 才能连接到 Tetragon 的 localhost:54321
+      # 因为 Tetragon 使用 hostNetwork: true，监听在节点级别的 localhost:54321
+      # ⭐ 推荐使用 DaemonSet 而不是 Deployment：
+      #   - 每个节点一个 adapter 实例，连接到本节点的 Tetragon
+      #   - 避免多个副本监听相同端口导致的冲突
+      hostNetwork: true
+      containers:
+      - name: adapter
+        image: your-registry/tetragon-kafka-adapter:latest
+        imagePullPolicy: Always
+        env:
+        - name: TETRAGON_GRPC_ADDR
+          value: "localhost:54321"  # 每个节点连接到本节点的 Tetragon
+        - name: KAFKA_BROKERS
+          value: "kafka-0.kafka:9092,kafka-1.kafka:9092"
+        - name: KAFKA_CLIENT_ID
+          value: "tetragon-kafka-adapter"
+        - name: KAFKA_TOPIC_AUTO_CREATE
+          value: "true"
+        - name: KAFKA_TOPIC_CLEANUP_POLICY
+          value: "compact"
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          # 资源请求（Guaranteed）
+          requests:
+            cpu: "500m"        # 0.5 核（最低保证）
+            memory: "512Mi"    # 512 MB（最低保证）
+          # 资源限制（最大使用）
+          limits:
+            cpu: "2000m"       # 2 核（最大限制，高负载时使用）
+            memory: "2Gi"      # 2 GB（最大限制，高负载时使用）
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: health
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
