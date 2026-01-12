@@ -52,14 +52,14 @@ func (n *EventNormalizer) Normalize(event *tetragon.GetEventsResponse) (*v1.Even
 	if err == nil {
 		// 将 JSON 字节解析为 map，保留完整的嵌套结构
 		var rawMap map[string]interface{}
-		if err := json.Unmarshal(rawJSON, &rawMap); err == nil {
+		if unmarshalErr := json.Unmarshal(rawJSON, &rawMap); unmarshalErr == nil {
 			// 直接使用解析后的 map，保留所有原始数据
 			schema.Raw = rawMap
 		} else {
 			// 如果解析失败，记录错误但继续处理
 			if n.logger != nil {
 				n.logger.Warn("无法解析原始事件 JSON",
-					zap.Error(err),
+					zap.Error(unmarshalErr),
 					zap.String("event_type", eventType))
 			}
 			// 作为备用，直接使用 JSON 字符串
