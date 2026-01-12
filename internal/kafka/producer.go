@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -25,6 +26,11 @@ type Producer struct {
 func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error) {
 	saramaConfig := sarama.NewConfig()
 	
+	// 网络超时配置（防止连接时卡住）
+	saramaConfig.Net.DialTimeout = 10 * time.Second
+	saramaConfig.Net.ReadTimeout = 10 * time.Second
+	saramaConfig.Net.WriteTimeout = 10 * time.Second
+	
 	// 基本配置
 	saramaConfig.Producer.Return.Successes = true
 	saramaConfig.Producer.Return.Errors = true
@@ -43,11 +49,17 @@ func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error)
 		saramaConfig.Net.MaxOpenRequests = 1
 	}
 
-	// 创建异步 Producer
+	// 创建异步 Producer（带超时控制）
 	producer, err := sarama.NewAsyncProducer(cfg.Brokers, saramaConfig)
 	if err != nil {
-		return nil, err
+		logger.Error("创建 Kafka Producer 失败",
+			zap.Strings("broker地址", cfg.Brokers),
+			zap.Error(err))
+		return nil, fmt.Errorf("创建 Kafka Producer 失败: %w", err)
 	}
+	
+	logger.Info("Kafka Producer 创建成功",
+		zap.Strings("broker地址", cfg.Brokers))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	
