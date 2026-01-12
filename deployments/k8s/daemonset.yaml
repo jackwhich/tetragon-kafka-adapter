@@ -16,9 +16,11 @@ spec:
     spec:
       # ⚠️ 重要：必须启用 hostNetwork 才能连接到 Tetragon 的 localhost:54321
       # 因为 Tetragon 使用 hostNetwork: true，监听在节点级别的 localhost:54321
-      # ⭐ 推荐使用 DaemonSet 而不是 Deployment：
-      #   - 每个节点一个 adapter 实例，连接到本节点的 Tetragon
-      #   - 避免多个副本监听相同端口导致的冲突
+      # ⭐ 使用 DaemonSet 的优势：
+      #   - 每个节点一个 adapter 实例，自动一一对应
+      #   - 每个实例连接本节点的 Tetragon（localhost:54321）
+      #   - 不会出现端口冲突（DaemonSet 保证每个节点只有一个 Pod）
+      #   - 不会出现重复事件（每个节点事件只被接收一次）
       hostNetwork: true
       containers:
       - name: adapter
