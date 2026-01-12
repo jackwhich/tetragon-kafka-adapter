@@ -76,18 +76,19 @@ schema:
 logger:
   level: "info"  # debug / info / warn / error
   format: "json"  # json / text
-  output: ["kafka"]  # 支持多个输出：file（文件）、kafka（Kafka）
+  output: ["file"]  # 支持多个输出：file（文件）、kafka（Kafka）
   # 注意：如果开启了 kafka.enabled=true，会自动禁用文件输出，只输出到 Kafka
   # 如果只想输出到文件，设置 output: ["file"] 且 kafka.enabled: false
   console:
-    enabled: false  # 是否启用 console 输出（stdout），用于 K8s 环境调试，可通过 kubectl logs 查看
+    enabled: true  # 是否启用 console 输出（stdout），用于 K8s 环境调试，可通过 kubectl logs 查看
   file:
     path: "/var/log/tetragon-kafka-adapter/app.log"
     max_size_mb: 100
     max_backups: 5
     max_age_days: 7
   kafka:
-    enabled: true  # 是否启用 Kafka 日志输出（开启后会自动禁用文件输出）
+    enabled: false  # 是否启用 Kafka 日志输出（开启后会自动禁用文件输出）
+    # 暂时禁用 Kafka 日志输出，使用 console 输出用于调试
     topic: "tetragon.logs"  # Kafka 日志主题
 
 # 监控配置
