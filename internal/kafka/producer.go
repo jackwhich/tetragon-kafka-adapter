@@ -30,6 +30,13 @@ func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error)
 	saramaConfig.Net.DialTimeout = 10 * time.Second
 	saramaConfig.Net.ReadTimeout = 10 * time.Second
 	saramaConfig.Net.WriteTimeout = 10 * time.Second
+	saramaConfig.Net.KeepAlive = 30 * time.Second
+	
+	// 元数据配置（防止获取元数据时卡住）
+	saramaConfig.Metadata.Retry.Max = 3
+	saramaConfig.Metadata.Retry.Backoff = 250 * time.Millisecond
+	saramaConfig.Metadata.Timeout = 10 * time.Second
+	saramaConfig.Metadata.RefreshFrequency = 10 * time.Minute
 	
 	// 基本配置
 	saramaConfig.Producer.Return.Successes = true
@@ -50,11 +57,16 @@ func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error)
 	}
 
 	// 创建异步 Producer（带超时控制）
+	// 注意：NewAsyncProducer 会尝试连接 broker 获取元数据，如果 broker 不可达会超时
+	logger.Info("正在连接 Kafka broker 获取元数据...",
+		zap.Strings("broker地址", cfg.Brokers),
+		zap.Duration("超时时间", saramaConfig.Metadata.Timeout))
 	producer, err := sarama.NewAsyncProducer(cfg.Brokers, saramaConfig)
 	if err != nil {
 		logger.Error("创建 Kafka Producer 失败",
 			zap.Strings("broker地址", cfg.Brokers),
-			zap.Error(err))
+			zap.Error(err),
+			zap.String("提示", "请检查：1) Kafka broker 地址是否正确 2) DNS 是否能解析 broker 主机名 3) 网络是否可达 4) 端口是否正确"))
 		return nil, fmt.Errorf("创建 Kafka Producer 失败: %w", err)
 	}
 	

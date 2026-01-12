@@ -18,10 +18,8 @@ tetragon:
       jitter: true
 
 # Kafka 配置
-# ⚠️ Kubernetes DNS 格式：pod-name.service-name.namespace 或 pod-name.namespace
-# 例如：kafka-0.kafka.test-ebpay-mid:9092 或 kafka-0.test-ebpay-mid:9092
 kafka:
-  brokers: ["kafka-0.kafka.test-ebpay-mid:9092","kafka-1.kafka.test-ebpay-mid:9093","kafka-0.kafka.test-ebpay-mid:9094"]
+  brokers: ["kafka-0.kafka.test-ebpay-mid.svc.cluster.local:9092","kafka-1.kafka.test-ebpay-mid.svc.cluster.local:9093","kafka-2.kafka.test-ebpay-mid.svc.cluster.local:9094"]
   client_id: "tetragon-consumer"
   acks: "all"  # all / 1 / 0
   compression: "snappy"  # none / gzip / snappy / lz4 / zstd
@@ -42,7 +40,7 @@ kafka:
     username: "tetragon-consumer"
     password_file: "/etc/kafka/password"
   topic_admin:
-    auto_create: false  # 禁用自动创建，topic 需要手动创建（推荐生产环境）
+    auto_create: false
     partitions: 4
     # replication_factor: 3  # 可选，不设置则使用 Kafka broker 的默认副本因子
     cleanup_policy: "compact"  # ⭐ 关键：启用 log compaction，自动去重（方案 1）
@@ -82,19 +80,18 @@ logger:
   console:
     enabled: true  # 是否启用 console 输出（stdout），用于 K8s 环境调试，可通过 kubectl logs 查看
   file:
-    path: "/var/log/tetragon-kafka-adapter/app.log"
+    path: "/app/app.log"
     max_size_mb: 100
     max_backups: 5
     max_age_days: 7
   kafka:
     enabled: false  # 是否启用 Kafka 日志输出（开启后会自动禁用文件输出）
-    # 暂时禁用 Kafka 日志输出，使用 console 输出用于调试
-    topic: "tetragon.logs"  # Kafka 日志主题
+    topic: "tetragon-kafka-adapter-logs"  # Kafka 日志主题
 
 # 监控配置
 monitoring:
   enabled: true
-  health_port: 8080
-  metrics_port: 9090
+  health_port: 51345
+  metrics_port: 51346
   pprof_enabled: false
   pprof_port: 6060
