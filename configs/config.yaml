@@ -22,10 +22,10 @@ tetragon:
 # 例如：kafka-0.kafka-headless.test-ebpay-mid:9092 或 kafka-0.kafka.test-ebpay-mid:9092
 # 如果使用 headless service，格式为：pod-name.service-name.namespace
 kafka:
-  # ⚠️ 使用 hostNetwork 时，需要使用 DNS 名称 + NodePort 端口
-  # NodePort: kafka-0:31365, kafka-1:31366, kafka-2:31367
-  # DNS 解析：kafka-0.kafka.test-ebpay-mid.svc.cluster.local -> 172.30.32.85
-  brokers: ["kafka-0.kafka.test-ebpay-mid.svc.cluster.local:31365","kafka-1.kafka.test-ebpay-mid.svc.cluster.local:31366","kafka-2.kafka.test-ebpay-mid.svc.cluster.local:31367"]
+  # ⚠️ 使用 hostNetwork 时，需要使用 DNS 名称 + 容器端口（不是 NodePort）
+  # 容器端口：kafka-0:9092, kafka-1:9093, kafka-2:9094
+  # DNS 通过 hostAliases 映射到对应的 NodePort Service IP
+  brokers: ["kafka-0.kafka.test-ebpay-mid.svc.cluster.local:9092","kafka-1.kafka.test-ebpay-mid.svc.cluster.local:9093","kafka-2.kafka.test-ebpay-mid.svc.cluster.local:9094"]
   client_id: "tetragon-consumer"
   acks: "all"  # all / 1 / 0
   compression: "snappy"  # none / gzip / snappy / lz4 / zstd
