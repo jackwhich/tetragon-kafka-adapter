@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+consumer  # macOS 本地编译的二进制文件
 # bin/
 dist/
 
