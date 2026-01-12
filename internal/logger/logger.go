@@ -65,8 +65,13 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 		outputs = []string{"file"}
 	}
 
-	// 文件输出
-	if contains(outputs, "file") {
+	// 如果开启了 Kafka 日志输出，且配置了 kafka 输出，则自动禁用文件输出
+	// 这样可以避免日志重复，只输出到 Kafka
+	shouldOutputToKafka := contains(outputs, "kafka") && cfg.Kafka.Enabled && kafkaProducer != nil
+	shouldOutputToFile := contains(outputs, "file") && !shouldOutputToKafka
+
+	// 文件输出（仅在未开启 Kafka 时输出）
+	if shouldOutputToFile {
 		fileWriter := &lumberjack.Logger{
 			Filename:   cfg.File.Path,
 			MaxSize:    cfg.File.MaxSizeMB, // MB
@@ -79,7 +84,7 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 	}
 
 	// Kafka 输出
-	if contains(outputs, "kafka") && cfg.Kafka.Enabled && kafkaProducer != nil {
+	if shouldOutputToKafka {
 		kafkaCore := NewKafkaCore(encoder, kafkaProducer, cfg.Kafka.Topic, enabler)
 		cores = append(cores, kafkaCore)
 	}

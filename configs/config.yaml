@@ -41,7 +41,7 @@ kafka:
     password_file: "/etc/kafka/password"
   topic_admin:
     auto_create: true
-    partitions: 24
+    partitions: 4
     # replication_factor: 3  # 可选，不设置则使用 Kafka broker 的默认副本因子
     cleanup_policy: "compact"  # ⭐ 关键：启用 log compaction，自动去重（方案 1）
     min_cleanable_dirty_ratio: "0.5"
@@ -74,14 +74,16 @@ schema:
 logger:
   level: "info"  # debug / info / warn / error
   format: "json"  # json / text
-  output: ["file", "kafka"]  # 支持多个输出：file（文件）、kafka（Kafka），不再支持 stdout
+  output: ["kafka"]  # 支持多个输出：file（文件）、kafka（Kafka），不再支持 stdout
+  # 注意：如果开启了 kafka.enabled=true，会自动禁用文件输出，只输出到 Kafka
+  # 如果只想输出到文件，设置 output: ["file"] 且 kafka.enabled: false
   file:
     path: "/var/log/tetragon-kafka-adapter/app.log"
     max_size_mb: 100
     max_backups: 5
     max_age_days: 7
   kafka:
-    enabled: true  # 是否启用 Kafka 日志输出
+    enabled: true  # 是否启用 Kafka 日志输出（开启后会自动禁用文件输出）
     topic: "tetragon.logs"  # Kafka 日志主题
 
 # 监控配置
