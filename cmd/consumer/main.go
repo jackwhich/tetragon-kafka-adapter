@@ -566,7 +566,7 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 			metrics.EventsOutTotal.WithLabelValues(topic, "writer_not_initialized").Inc()
 			continue
 		}
-		
+
 		if err := writer.Write(msg); err != nil {
 			metrics.EventsOutTotal.WithLabelValues(topic, "failed").Inc()
 			log.Error("写入 Kafka 失败",

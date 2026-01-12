@@ -31,9 +31,10 @@ data:
     # 例如：kafka-0.kafka-headless.test-ebpay-mid:9092 或 kafka-0.kafka.test-ebpay-mid:9092
     # 如果使用 headless service，格式为：pod-name.service-name.namespace
     kafka:
-      # 使用 NodePort Service 的 ClusterIP 地址（更可靠，避免 DNS 解析问题）
-      # kafka-0: 10.68.148.4, kafka-1: 10.68.57.218, kafka-2: 10.68.220.27
-      brokers: ["10.68.148.4:9092","10.68.57.218:9093","10.68.220.27:9094"]
+      # ⚠️ 使用 hostNetwork 时，需要使用 DNS 名称 + NodePort 端口
+      # NodePort: kafka-0:31365, kafka-1:31366, kafka-2:31367
+      # DNS 解析：kafka-0.kafka.test-ebpay-mid.svc.cluster.local -> 172.30.32.85
+      brokers: ["kafka-0.kafka.test-ebpay-mid.svc.cluster.local:31365","kafka-1.kafka.test-ebpay-mid.svc.cluster.local:31366","kafka-2.kafka.test-ebpay-mid.svc.cluster.local:31367"]
       client_id: "tetragon-consumer"
       acks: "all"  # all / 1 / 0
       compression: "snappy"  # none / gzip / snappy / lz4 / zstd
