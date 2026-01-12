@@ -106,7 +106,7 @@ data:
     # 监控配置
     monitoring:
       enabled: true
-      health_port: 8080
-      metrics_port: 9090
+      health_port: 51345
+      metrics_port: 51346
       pprof_enabled: false
       pprof_port: 6060

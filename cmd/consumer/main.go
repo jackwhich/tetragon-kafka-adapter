@@ -162,15 +162,22 @@ func main() {
 	}
 
 	// 创建 Kafka Producer
+	// ⚠️ 注意：如果 Kafka Producer 创建失败，应用会退出，健康检查服务器不会启动
 	log.Info("正在创建 Kafka Producer...", zap.Strings("代理", cfg.Kafka.Brokers))
 	_ = log.Sync() // 立即刷新日志
 	producer, err := kafka.NewProducer(&cfg.Kafka, log)
 	if err != nil {
-		log.Fatal("创建 Kafka Producer 失败", zap.Error(err))
+		// 如果 Kafka 连接失败，记录错误但不立即退出，先启动健康检查服务器
+		log.Error("创建 Kafka Producer 失败，但继续启动其他组件",
+			zap.Error(err),
+			zap.String("提示", "应用将继续运行，但无法写入 Kafka。请检查 Kafka broker 连接。"))
+		// 不设置 producer，后续代码会检查 producer 是否为 nil
+		producer = nil
+	} else {
+		defer producer.Close()
+		log.Info("Kafka Producer 创建成功")
+		_ = log.Sync() // 立即刷新日志
 	}
-	defer producer.Close()
-	log.Info("Kafka Producer 创建成功")
-	_ = log.Sync() // 立即刷新日志
 
 	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
 	if hasKafkaLog && cfg.Logger.Kafka.Enabled {
@@ -190,9 +197,16 @@ func main() {
 		}
 	}
 
-	// 创建 Kafka Writer
-	writer := kafka.NewWriter(producer, r, &cfg.Kafka, log)
-	writer.Start(ctx)
+	// 创建 Kafka Writer（只有在 Producer 创建成功时才创建）
+	var writer *kafka.Writer
+	if producer != nil {
+		writer = kafka.NewWriter(producer, r, &cfg.Kafka, log)
+		writer.Start(ctx)
+		log.Info("Kafka Writer 已启动")
+	} else {
+		log.Warn("Kafka Producer 未创建，跳过 Writer 初始化")
+		writer = nil
+	}
 	// 注意：writer.Close() 应该在优雅关闭时调用，而不是在 defer 中
 	// 因为需要先关闭 channel，然后等待 workers 完成
 
@@ -200,6 +214,7 @@ func main() {
 	var healthServer *health.Server
 	var metricsServer *http.Server
 	if cfg.Monitoring.Enabled {
+		log.Info("正在启动健康检查服务器...", zap.Int("端口", cfg.Monitoring.HealthPort))
 		healthServer = health.NewServer(cfg.Monitoring.HealthPort, eventQueue, log)
 		healthServer.SetReady(false) // 初始状态为未就绪
 
@@ -213,6 +228,7 @@ func main() {
 						zap.Stack("stack"))
 				}
 			}()
+			log.Info("健康检查服务器已启动", zap.Int("端口", cfg.Monitoring.HealthPort))
 			if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Error("健康检查服务器错误", zap.Error(err))
 			}
@@ -368,12 +384,16 @@ func main() {
 	// 第四步：关闭 Writer channel，然后等待所有 Kafka 写入任务完成
 	// 注意：此时 writeToKafka goroutine 应该已经因为 context 取消而退出
 	// 但可能还有消息在 writer 的内部队列中
-	log.Info("关闭 Writer channel...")
-	writer.Close() // 关闭 channel，停止接收新消息
+	if writer != nil {
+		log.Info("关闭 Writer channel...")
+		writer.Close() // 关闭 channel，停止接收新消息
 
-	log.Info("等待所有 Kafka 写入任务完成...")
-	writer.Wait()
-	log.Info("所有 Kafka 写入任务已完成")
+		log.Info("等待所有 Kafka 写入任务完成...")
+		writer.Wait()
+		log.Info("所有 Kafka 写入任务已完成")
+	} else {
+		log.Info("Writer 未初始化，跳过关闭")
+	}
 
 	// 第五步：关闭 HTTP 服务器
 	if cfg.Monitoring.Enabled {
@@ -538,6 +558,15 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 			TraceID: traceID, // 传递 trace ID 到 Message，用于 Writer 中的日志
 		}
 
+		// 如果 writer 为 nil（Kafka 连接失败），跳过写入
+		if writer == nil {
+			log.Warn("Kafka Writer 未初始化，跳过消息写入",
+				zap.String("主题", topic),
+				zap.String("trace_id", traceID))
+			metrics.EventsOutTotal.WithLabelValues(topic, "writer_not_initialized").Inc()
+			continue
+		}
+		
 		if err := writer.Write(msg); err != nil {
 			metrics.EventsOutTotal.WithLabelValues(topic, "failed").Inc()
 			log.Error("写入 Kafka 失败",
