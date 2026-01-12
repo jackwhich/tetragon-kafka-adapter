@@ -42,7 +42,7 @@ kafka:
   topic_admin:
     auto_create: true
     partitions: 24
-    replication_factor: 3
+    # replication_factor: 3  # 可选，不设置则使用 Kafka broker 的默认副本因子
     cleanup_policy: "compact"  # ⭐ 关键：启用 log compaction，自动去重（方案 1）
     min_cleanable_dirty_ratio: "0.5"
     retention_ms: 604800000  # 7 days

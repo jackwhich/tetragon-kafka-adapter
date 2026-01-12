@@ -79,7 +79,7 @@ type SASLConfig struct {
 type TopicAdminConfig struct {
 	AutoCreate         bool   `mapstructure:"auto_create"`
 	Partitions         int    `mapstructure:"partitions"`
-	ReplicationFactor  int16  `mapstructure:"replication_factor"`
+	ReplicationFactor  *int16 `mapstructure:"replication_factor"` // 可选，nil 或未设置时使用 broker 默认值
 	CleanupPolicy      string `mapstructure:"cleanup_policy"`
 	MinCleanableDirtyRatio string `mapstructure:"min_cleanable_dirty_ratio"`
 	RetentionMs        int64  `mapstructure:"retention_ms"`
@@ -170,7 +170,7 @@ func DefaultConfig() *Config {
 			TopicAdmin: TopicAdminConfig{
 				AutoCreate:         true,
 				Partitions:         24,
-				ReplicationFactor:  3,
+				ReplicationFactor:  nil, // nil 表示使用 broker 的默认副本因子
 				CleanupPolicy:      "compact",
 				MinCleanableDirtyRatio: "0.5",
 				RetentionMs:        604800000,

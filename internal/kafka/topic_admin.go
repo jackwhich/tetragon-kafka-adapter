@@ -58,9 +58,15 @@ func (ta *TopicAdmin) CreateCompactedTopic(ctx context.Context, topic string) er
 	}
 
 	// 创建 Compacted Topic
+	// 如果未设置副本因子，使用 -1 让 Kafka 使用 broker 的默认值
+	replicationFactor := int16(-1)
+	if ta.config.ReplicationFactor != nil {
+		replicationFactor = *ta.config.ReplicationFactor
+	}
+
 	topicDetail := &sarama.TopicDetail{
 		NumPartitions:     int32(ta.config.Partitions),
-		ReplicationFactor: ta.config.ReplicationFactor,
+		ReplicationFactor: replicationFactor,
 		ConfigEntries: map[string]*string{
 			"cleanup.policy":              stringPtr(ta.config.CleanupPolicy),
 			"min.cleanable.dirty.ratio":   stringPtr(ta.config.MinCleanableDirtyRatio),
@@ -75,10 +81,16 @@ func (ta *TopicAdmin) CreateCompactedTopic(ctx context.Context, topic string) er
 		return err
 	}
 
-	ta.logger.Info("已创建 Compacted Topic", 
+	logFields := []zap.Field{
 		zap.String("主题", topic),
 		zap.Int32("分区数", topicDetail.NumPartitions),
-		zap.Int16("副本因子", topicDetail.ReplicationFactor))
+	}
+	if ta.config.ReplicationFactor != nil {
+		logFields = append(logFields, zap.Int16("副本因子", topicDetail.ReplicationFactor))
+	} else {
+		logFields = append(logFields, zap.String("副本因子", "使用 broker 默认值"))
+	}
+	ta.logger.Info("已创建 Compacted Topic", logFields...)
 	
 	metrics.KafkaTopicCreateTotal.WithLabelValues("success").Inc()
 	return nil
