@@ -117,10 +117,7 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 		if logDir != "" && logDir != "." {
 			// 尝试创建目录，如果失败不影响初始化（lumberjack 会在写入时再次尝试）
 			// 但提前创建可以避免第一次写入时的延迟和潜在错误
-			if err := os.MkdirAll(logDir, 0755); err != nil {
-				// 如果创建目录失败，lumberjack 会在第一次写入时再次尝试
-				// 这里不返回错误，让 lumberjack 自己处理
-			}
+			_ = os.MkdirAll(logDir, 0755) // 忽略错误，lumberjack 会在第一次写入时再次尝试
 		}
 		
 		fileWriter := &lumberjack.Logger{
@@ -138,6 +135,12 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 	if shouldOutputToKafka {
 		kafkaCore := NewKafkaCore(encoder, kafkaProducer, cfg.Kafka.Topic, enabler)
 		cores = append(cores, kafkaCore)
+	}
+
+	// Console 输出（用于 K8s 调试，输出到 stdout）
+	if cfg.Console.Enabled {
+		consoleCore := zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), enabler)
+		cores = append(cores, consoleCore)
 	}
 
 	// 如果没有配置任何输出，且没有 Kafka Producer，使用 no-op core（避免创建文件）

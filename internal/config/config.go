@@ -112,11 +112,12 @@ type SchemaConfig struct {
 
 // LoggerConfig 日志配置
 type LoggerConfig struct {
-	Level  string      `mapstructure:"level"`
-	Format string      `mapstructure:"format"`
-	Output []string    `mapstructure:"output"` // 支持多个输出：file, kafka（不再支持 stdout）
-	File   FileLogConfig `mapstructure:"file"`
-	Kafka  KafkaLogConfig `mapstructure:"kafka"`
+	Level   string         `mapstructure:"level"`
+	Format  string         `mapstructure:"format"`
+	Output  []string       `mapstructure:"output"` // 支持多个输出：file, kafka
+	Console ConsoleLogConfig `mapstructure:"console"` // Console 输出配置（用于 K8s 调试）
+	File    FileLogConfig  `mapstructure:"file"`
+	Kafka   KafkaLogConfig `mapstructure:"kafka"`
 }
 
 // FileLogConfig 文件日志配置
@@ -125,6 +126,11 @@ type FileLogConfig struct {
 	MaxSizeMB  int    `mapstructure:"max_size_mb"`
 	MaxBackups int    `mapstructure:"max_backups"`
 	MaxAgeDays int    `mapstructure:"max_age_days"`
+}
+
+// ConsoleLogConfig Console 日志配置（用于 K8s 调试）
+type ConsoleLogConfig struct {
+	Enabled bool `mapstructure:"enabled"` // 是否启用 console 输出（stdout）
 }
 
 // KafkaLogConfig Kafka 日志配置
@@ -210,7 +216,10 @@ func DefaultConfig() *Config {
 		Logger: LoggerConfig{
 			Level:  "info",
 			Format: "json",
-			Output: []string{"file"}, // 默认只输出到文件，不输出到 stdout
+			Output: []string{"file"}, // 默认只输出到文件
+			Console: ConsoleLogConfig{
+				Enabled: false, // 默认不输出到 console（K8s 环境可通过此开关开启调试）
+			},
 			File: FileLogConfig{
 				Path:       "/var/log/tetragon-kafka-adapter/app.log",
 				MaxSizeMB:  100,
