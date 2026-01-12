@@ -25,10 +25,18 @@ spec:
       # ⚠️ 使用 hostNetwork 时，必须配置 hostAliases，因为 Pod 使用宿主机的 /etc/hosts
       # 如果宿主机没有这些 DNS 映射，Pod 也无法解析
       hostAliases:
-      - ip: "172.30.32.85"
+      # 为每个 Kafka broker 配置不同的 IP（使用 NodePort Service 的 ClusterIP）
+      # kafka-0 NodePort Service: 10.68.148.4 -> NodePort 31365
+      - ip: "10.68.148.4"
         hostnames:
         - "kafka-0.kafka.test-ebpay-mid.svc.cluster.local"
+      # kafka-1 NodePort Service: 10.68.57.218 -> NodePort 31366
+      - ip: "10.68.57.218"
+        hostnames:
         - "kafka-1.kafka.test-ebpay-mid.svc.cluster.local"
+      # kafka-2 NodePort Service: 10.68.220.27 -> NodePort 31367
+      - ip: "10.68.220.27"
+        hostnames:
         - "kafka-2.kafka.test-ebpay-mid.svc.cluster.local"
       containers:
       - name: adapter
