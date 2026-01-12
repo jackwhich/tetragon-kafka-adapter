@@ -32,10 +32,10 @@ func NewServer(port int, q *queue.Queue, logger *zap.Logger) *Server {
 		logger: logger,
 	}
 
-	// 注册健康检查端点
+	// 注册健康检查端点（必须在根路径之前注册，确保精确匹配）
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/ready", s.readyHandler)
-	// 添加根路径处理器，用于调试
+	// 添加根路径处理器，用于调试（放在最后，作为 fallback）
 	mux.HandleFunc("/", s.rootHandler)
 
 	s.server = &http.Server{
@@ -89,13 +89,25 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // rootHandler 根路径处理器（用于调试）
+// 注意：这个处理器只处理精确匹配 "/" 的请求，不会拦截其他路径
 func (s *Server) rootHandler(w http.ResponseWriter, r *http.Request) {
+	// 如果不是根路径，返回 404
+	if r.URL.Path != "/" {
+		s.logger.Warn("收到未匹配的请求",
+			zap.String("方法", r.Method),
+			zap.String("路径", r.URL.Path),
+			zap.String("远程地址", r.RemoteAddr))
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("404 page not found"))
+		return
+	}
+	
 	s.logger.Info("收到根路径请求",
 		zap.String("方法", r.Method),
 		zap.String("路径", r.URL.Path),
 		zap.String("远程地址", r.RemoteAddr))
 	
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	
 	status := map[string]interface{}{
@@ -104,18 +116,20 @@ func (s *Server) rootHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 	
-	json.NewEncoder(w).Encode(status)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		s.logger.Error("写入根路径响应失败", zap.Error(err))
+	}
 }
 
 // healthHandler 健康检查处理器
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	s.logger.Debug("收到健康检查请求",
+	s.logger.Info("收到健康检查请求",
 		zap.String("方法", r.Method),
 		zap.String("路径", r.URL.Path),
 		zap.String("远程地址", r.RemoteAddr))
 	
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	// 确保设置正确的 Content-Type
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	
 	status := map[string]interface{}{
 		"status": "healthy",
@@ -126,12 +140,16 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	
-	json.NewEncoder(w).Encode(status)
+	// 先设置状态码，再写入响应体
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		s.logger.Error("写入健康检查响应失败", zap.Error(err))
+	}
 }
 
 // readyHandler 就绪检查处理器
 func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
-	s.logger.Debug("收到就绪检查请求",
+	s.logger.Info("收到就绪检查请求",
 		zap.String("方法", r.Method),
 		zap.String("路径", r.URL.Path),
 		zap.String("远程地址", r.RemoteAddr))
@@ -143,25 +161,37 @@ func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 	
 	// 如果正在关闭，返回未就绪
 	if shutdown {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("shutting down"))
+		if _, err := w.Write([]byte("shutting down")); err != nil {
+			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
+		}
 		return
 	}
 	
 	// 检查服务是否标记为就绪
 	if !ready {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("not ready"))
+		if _, err := w.Write([]byte("not ready")); err != nil {
+			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
+		}
 		return
 	}
 	
 	// 队列未满时认为就绪
 	if s.queue.Size() < s.queue.Capacity() {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ready"))
+		if _, err := w.Write([]byte("ready")); err != nil {
+			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
+		}
 	} else {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("not ready: queue full"))
+		if _, err := w.Write([]byte("not ready: queue full")); err != nil {
+			s.logger.Error("写入就绪检查响应失败", zap.Error(err))
+		}
 	}
 }
 
