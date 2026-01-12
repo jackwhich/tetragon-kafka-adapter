@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"os"
 	"strings"
 
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
@@ -9,6 +10,48 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+// getK8sMetadata 获取 Kubernetes 元数据（Pod 名称、IP、Namespace 等）
+func getK8sMetadata() []zap.Field {
+	var fields []zap.Field
+	
+	// Pod 名称（优先使用 POD_NAME，否则使用 HOSTNAME）
+	if podName := os.Getenv("POD_NAME"); podName != "" {
+		fields = append(fields, zap.String("pod_name", podName))
+	} else if hostname := os.Getenv("HOSTNAME"); hostname != "" {
+		fields = append(fields, zap.String("pod_name", hostname))
+	}
+	
+	// Pod IP
+	if podIP := os.Getenv("POD_IP"); podIP != "" {
+		fields = append(fields, zap.String("pod_ip", podIP))
+	}
+	
+	// Namespace
+	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
+		fields = append(fields, zap.String("namespace", namespace))
+	}
+	
+	// Node Name
+	if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
+		fields = append(fields, zap.String("node_name", nodeName))
+	}
+	
+	// Node IP（节点 IP 地址）
+	if nodeIP := os.Getenv("NODE_IP"); nodeIP != "" {
+		fields = append(fields, zap.String("node_ip", nodeIP))
+	} else if hostIP := os.Getenv("HOST_IP"); hostIP != "" {
+		// 备用：使用 HOST_IP（某些环境可能使用这个）
+		fields = append(fields, zap.String("node_ip", hostIP))
+	}
+	
+	// Server Name / Hostname（作为备用）
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		fields = append(fields, zap.String("server_name", hostname))
+	}
+	
+	return fields
+}
 
 var globalLogger *zap.Logger
 
@@ -106,7 +149,14 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 	core := zapcore.NewTee(cores...)
 
 	// 创建 logger（不输出到 stdout）
+	// 添加 Kubernetes 元数据作为全局字段
+	k8sFields := getK8sMetadata()
 	globalLogger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	
+	// 如果有 Kubernetes 元数据，添加到 logger
+	if len(k8sFields) > 0 {
+		globalLogger = globalLogger.With(k8sFields...)
+	}
 
 	return nil
 }

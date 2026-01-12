@@ -30,6 +30,7 @@ type Writer struct {
 	workers    int
 	messageCh  chan *Message
 	wg         sync.WaitGroup
+	closeOnce  sync.Once // 确保 Close() 只执行一次
 }
 
 // NewWriter 创建新的 Writer
@@ -242,9 +243,10 @@ func (w *Writer) Wait() {
 // 注意：关闭 channel 前应该先等待所有 workers 完成，否则可能导致 panic
 // 建议在调用 Close() 前先调用 Wait()
 func (w *Writer) Close() {
-	// 安全关闭：先关闭 channel，workers 会检测到 channel 关闭并退出
-	// 但更好的做法是在调用 Close() 前先调用 Wait()
-	close(w.messageCh)
+	// 使用 sync.Once 确保 channel 只关闭一次，避免 panic
+	w.closeOnce.Do(func() {
+		close(w.messageCh)
+	})
 }
 
 var ErrQueueFull = &writerError{msg: "writer queue is full"}

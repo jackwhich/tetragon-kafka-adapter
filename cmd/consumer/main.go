@@ -359,6 +359,16 @@ func main() {
 			zap.Int("超时时间", 10))
 	}
 
+	// 第七步：同步日志（确保所有日志都发送完成，包括 Kafka 日志）
+	// 注意：必须在关闭 producer 之前执行，因为 Kafka 日志需要 producer
+	// 优雅关闭过程中的所有日志都应该能够发送到 Kafka
+	log.Info("正在同步日志...")
+	if err := logger.Sync(); err != nil {
+		log.Warn("同步日志失败", zap.Error(err))
+	} else {
+		log.Info("日志同步完成")
+	}
+	
 	log.Info("优雅关闭完成，程序退出")
 }
 

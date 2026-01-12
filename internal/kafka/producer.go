@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -15,6 +16,9 @@ type Producer struct {
 	producer sarama.AsyncProducer
 	config   *config.KafkaConfig
 	logger   *zap.Logger
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 // NewProducer 创建新的 Producer
@@ -45,13 +49,18 @@ func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error)
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	p := &Producer{
 		producer: producer,
 		config:   cfg,
 		logger:   logger,
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 
 	// 启动错误处理 goroutine
+	p.wg.Add(2)
 	go p.handleErrors()
 	go p.handleSuccesses()
 
@@ -79,34 +88,58 @@ func (p *Producer) SendMessage(ctx context.Context, topic string, key string, va
 
 // handleErrors 处理发送错误
 func (p *Producer) handleErrors() {
-	for err := range p.producer.Errors() {
-		if err != nil {
-			metrics.KafkaErrorsTotal.WithLabelValues("write", err.Msg.Topic).Inc()
-			// 增强日志：添加更多上下文信息
-			var keyStr string
-			if err.Msg.Key != nil {
-				if keyEncoder, ok := err.Msg.Key.(sarama.StringEncoder); ok {
-					keyStr = string(keyEncoder)
-				}
+	defer p.wg.Done()
+	
+	for {
+		select {
+		case <-p.ctx.Done():
+			// Context 已取消，退出
+			return
+		case err, ok := <-p.producer.Errors():
+			if !ok {
+				// Channel 已关闭，退出
+				return
 			}
-			p.logger.Error("发送消息到 Kafka 失败",
-				zap.String("主题", err.Msg.Topic),
-				zap.String("消息键", keyStr),
-				zap.Int("分区", int(err.Msg.Partition)),
-				zap.Int64("偏移量", err.Msg.Offset),
-				zap.Error(err.Err))
+			if err != nil {
+				metrics.KafkaErrorsTotal.WithLabelValues("write", err.Msg.Topic).Inc()
+				// 增强日志：添加更多上下文信息
+				var keyStr string
+				if err.Msg.Key != nil {
+					if keyEncoder, ok := err.Msg.Key.(sarama.StringEncoder); ok {
+						keyStr = string(keyEncoder)
+					}
+				}
+				p.logger.Error("发送消息到 Kafka 失败",
+					zap.String("主题", err.Msg.Topic),
+					zap.String("消息键", keyStr),
+					zap.Int("分区", int(err.Msg.Partition)),
+					zap.Int64("偏移量", err.Msg.Offset),
+					zap.Error(err.Err))
+			}
 		}
 	}
 }
 
 // handleSuccesses 处理发送成功
 func (p *Producer) handleSuccesses() {
-	for msg := range p.producer.Successes() {
-		metrics.KafkaWriteMessagesTotal.WithLabelValues(msg.Topic).Inc()
-		// 性能优化：使用类型断言避免 panic，并检查 nil
-		if msg.Value != nil {
-			if byteEncoder, ok := msg.Value.(sarama.ByteEncoder); ok {
-				metrics.KafkaWriteBytesTotal.WithLabelValues(msg.Topic).Add(float64(len(byteEncoder)))
+	defer p.wg.Done()
+	
+	for {
+		select {
+		case <-p.ctx.Done():
+			// Context 已取消，退出
+			return
+		case msg, ok := <-p.producer.Successes():
+			if !ok {
+				// Channel 已关闭，退出
+				return
+			}
+			metrics.KafkaWriteMessagesTotal.WithLabelValues(msg.Topic).Inc()
+			// 性能优化：使用类型断言避免 panic，并检查 nil
+			if msg.Value != nil {
+				if byteEncoder, ok := msg.Value.(sarama.ByteEncoder); ok {
+					metrics.KafkaWriteBytesTotal.WithLabelValues(msg.Topic).Add(float64(len(byteEncoder)))
+				}
 			}
 		}
 	}
@@ -115,7 +148,17 @@ func (p *Producer) handleSuccesses() {
 // Close 关闭 Producer
 func (p *Producer) Close() error {
 	metrics.KafkaProducerConnected.Set(0)
-	return p.producer.Close()
+	
+	// 先取消 context，让 goroutine 退出
+	p.cancel()
+	
+	// 关闭 producer（这会关闭 Errors 和 Successes channel）
+	err := p.producer.Close()
+	
+	// 等待所有 goroutine 退出
+	p.wg.Wait()
+	
+	return err
 }
 
 // parseAcks 解析 ACKS 配置

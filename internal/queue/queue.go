@@ -92,6 +92,8 @@ func (q *Queue) Pop(ctx context.Context) (*tetragon.GetEventsResponse, error) {
 func (q *Queue) Close() {
 	q.updateTicker.Stop()
 	close(q.stopCh)
+	// 注意：updateMetricsLoop goroutine 会在检测到 stopCh 关闭后自动退出
+	// 这里不需要等待，因为它是轻量级的指标更新操作
 }
 
 // Size 获取队列当前大小
