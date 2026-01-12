@@ -51,7 +51,7 @@ data:
         username: "tetragon-consumer"
         password_file: "/etc/kafka/password"
       topic_admin:
-        auto_create: true
+        auto_create: false  # 禁用自动创建，topic 需要手动创建（推荐生产环境）
         partitions: 4
         # replication_factor: 3  # 可选，不设置则使用 Kafka broker 的默认副本因子
         cleanup_policy: "compact"  # ⭐ 关键：启用 log compaction，自动去重（方案 1）

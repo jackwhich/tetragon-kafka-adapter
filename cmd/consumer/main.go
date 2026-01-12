@@ -105,22 +105,32 @@ func main() {
 	var wg sync.WaitGroup
 
 	// 初始化 gRPC 客户端
+	log.Info("正在创建 gRPC 客户端...", zap.String("地址", cfg.Tetragon.GRPCAddr))
+	_ = log.Sync() // 立即刷新日志
 	grpcClient, err := grpc.NewClient(&cfg.Tetragon)
 	if err != nil {
 		log.Fatal("创建 gRPC 客户端失败", zap.Error(err))
 	}
 	defer grpcClient.Close()
+	log.Info("gRPC 客户端创建成功")
+	_ = log.Sync() // 立即刷新日志
 
 	// 创建队列
+	log.Info("正在创建事件队列...")
 	eventQueue := queue.NewQueue(&cfg.Tetragon.Stream, log)
 	defer eventQueue.Close()
 	sampler := queue.NewSampler(&cfg.Tetragon.Stream)
+	log.Info("事件队列创建成功")
 
 	// 创建路由
+	log.Info("正在创建路由...")
 	r := router.NewRouter(cfg.Routing.Topics, log)
+	log.Info("路由创建成功")
 
 	// 创建规范化器
+	log.Info("正在创建规范化器...")
 	normalizer := normalize.NewEventNormalizer(log)
+	log.Info("规范化器创建成功")
 
 	// 创建 Kafka Topic Admin（方案 1：自动创建 Compacted Topic）
 	var topicAdmin *kafka.TopicAdmin
@@ -152,11 +162,15 @@ func main() {
 	}
 
 	// 创建 Kafka Producer
+	log.Info("正在创建 Kafka Producer...", zap.Strings("代理", cfg.Kafka.Brokers))
+	_ = log.Sync() // 立即刷新日志
 	producer, err := kafka.NewProducer(&cfg.Kafka, log)
 	if err != nil {
 		log.Fatal("创建 Kafka Producer 失败", zap.Error(err))
 	}
 	defer producer.Close()
+	log.Info("Kafka Producer 创建成功")
+	_ = log.Sync() // 立即刷新日志
 
 	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
 	if hasKafkaLog && cfg.Logger.Kafka.Enabled {
