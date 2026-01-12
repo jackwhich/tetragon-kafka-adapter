@@ -41,8 +41,29 @@ func main() {
 		panic(err)
 	}
 
-	// 初始化日志
-	if err := logger.Init(cfg.Logger.Level, cfg.Logger.Format); err != nil {
+	// 第一步：初始化基础日志（只输出到文件，因为此时还没有 Kafka Producer）
+	// 如果配置了 Kafka 日志输出，先临时禁用，等创建 Producer 后再启用
+	tempLoggerCfg := cfg.Logger
+	hasKafkaLog := false
+	for _, output := range tempLoggerCfg.Output {
+		if output == "kafka" {
+			hasKafkaLog = true
+			// 临时移除 kafka 输出
+			var newOutputs []string
+			for _, o := range tempLoggerCfg.Output {
+				if o != "kafka" {
+					newOutputs = append(newOutputs, o)
+				}
+			}
+			if len(newOutputs) == 0 {
+				newOutputs = []string{"file"} // 至少保留文件输出
+			}
+			tempLoggerCfg.Output = newOutputs
+			break
+		}
+	}
+
+	if err := logger.Init(&tempLoggerCfg, nil); err != nil {
 		panic(err)
 	}
 	defer logger.Sync()
@@ -104,6 +125,18 @@ func main() {
 		log.Fatal("创建 Kafka Producer 失败", zap.Error(err))
 	}
 	defer producer.Close()
+
+	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
+	if hasKafkaLog && cfg.Logger.Kafka.Enabled {
+		log.Info("重新初始化 logger，启用 Kafka 日志输出",
+			zap.String("kafka主题", cfg.Logger.Kafka.Topic))
+		if err := logger.Init(&cfg.Logger, producer); err != nil {
+			log.Warn("重新初始化 logger 失败，继续使用文件日志", zap.Error(err))
+		} else {
+			log = logger.GetLogger()
+			log.Info("Logger 已重新初始化，Kafka 日志输出已启用")
+		}
+	}
 
 	// 创建 Kafka Writer
 	writer := kafka.NewWriter(producer, r, &cfg.Kafka, log)

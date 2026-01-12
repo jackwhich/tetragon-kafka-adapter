@@ -74,12 +74,15 @@ schema:
 logger:
   level: "info"  # debug / info / warn / error
   format: "json"  # json / text
-  output: "stdout"  # stdout / file
+  output: ["file", "kafka"]  # 支持多个输出：file（文件）、kafka（Kafka），不再支持 stdout
   file:
-    path: "/var/log/consumer.log"
+    path: "/var/log/tetragon-kafka-adapter/app.log"
     max_size_mb: 100
     max_backups: 5
     max_age_days: 7
+  kafka:
+    enabled: true  # 是否启用 Kafka 日志输出
+    topic: "tetragon.logs"  # Kafka 日志主题
 
 # 监控配置
 monitoring:

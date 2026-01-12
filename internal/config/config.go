@@ -114,8 +114,9 @@ type SchemaConfig struct {
 type LoggerConfig struct {
 	Level  string      `mapstructure:"level"`
 	Format string      `mapstructure:"format"`
-	Output string      `mapstructure:"output"`
+	Output []string    `mapstructure:"output"` // 支持多个输出：file, kafka（不再支持 stdout）
 	File   FileLogConfig `mapstructure:"file"`
+	Kafka  KafkaLogConfig `mapstructure:"kafka"`
 }
 
 // FileLogConfig 文件日志配置
@@ -124,6 +125,12 @@ type FileLogConfig struct {
 	MaxSizeMB  int    `mapstructure:"max_size_mb"`
 	MaxBackups int    `mapstructure:"max_backups"`
 	MaxAgeDays int    `mapstructure:"max_age_days"`
+}
+
+// KafkaLogConfig Kafka 日志配置
+type KafkaLogConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Topic   string `mapstructure:"topic"`
 }
 
 // MonitoringConfig 监控配置
@@ -203,7 +210,17 @@ func DefaultConfig() *Config {
 		Logger: LoggerConfig{
 			Level:  "info",
 			Format: "json",
-			Output: "stdout",
+			Output: []string{"file"}, // 默认只输出到文件，不输出到 stdout
+			File: FileLogConfig{
+				Path:       "/var/log/tetragon-kafka-adapter/app.log",
+				MaxSizeMB:  100,
+				MaxBackups: 5,
+				MaxAgeDays: 7,
+			},
+			Kafka: KafkaLogConfig{
+				Enabled: false,
+				Topic:   "tetragon.logs",
+			},
 		},
 		Monitoring: MonitoringConfig{
 			Enabled:    true,
