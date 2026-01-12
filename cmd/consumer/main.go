@@ -33,12 +33,16 @@ func main() {
 	// 加载配置
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		panic(err)
+		// 配置加载失败时，输出到 stderr（此时 logger 还未初始化）
+		fmt.Fprintf(os.Stderr, "ERROR: 加载配置文件失败: %v\n", err)
+		os.Exit(1)
 	}
 
 	// 验证配置
 	if err := config.Validate(cfg); err != nil {
-		panic(err)
+		// 配置验证失败时，输出到 stderr（此时 logger 还未初始化）
+		fmt.Fprintf(os.Stderr, "ERROR: 配置验证失败: %v\n", err)
+		os.Exit(1)
 	}
 
 	// 第一步：初始化基础日志
@@ -77,14 +81,23 @@ func main() {
 	}
 
 	if err := logger.Init(&tempLoggerCfg, nil); err != nil {
-		panic(err)
+		// Logger 初始化失败时，输出到 stderr
+		fmt.Fprintf(os.Stderr, "ERROR: 初始化 logger 失败: %v\n", err)
+		os.Exit(1)
 	}
 	defer logger.Sync()
 
 	log := logger.GetLogger()
+	
+	// 立即刷新日志，确保 console 输出能立即看到（特别是第一次启动时）
+	if cfg.Logger.Console.Enabled {
+		_ = log.Sync() // 忽略错误，只是尝试刷新
+	}
+	
 	log.Info("正在启动 Tetragon Kafka Adapter",
 		zap.String("grpc地址", cfg.Tetragon.GRPCAddr),
-		zap.Strings("kafka代理", cfg.Kafka.Brokers))
+		zap.Strings("kafka代理", cfg.Kafka.Brokers),
+		zap.Bool("console日志", cfg.Logger.Console.Enabled))
 
 	// 创建上下文和 WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
@@ -142,12 +155,18 @@ func main() {
 	// 第二步：如果配置了 Kafka 日志输出，重新初始化 logger（包含 Kafka core）
 	if hasKafkaLog && cfg.Logger.Kafka.Enabled {
 		log.Info("重新初始化 logger，启用 Kafka 日志输出",
-			zap.String("kafka主题", cfg.Logger.Kafka.Topic))
+			zap.String("kafka主题", cfg.Logger.Kafka.Topic),
+			zap.Bool("console日志", cfg.Logger.Console.Enabled))
 		if err := logger.Init(&cfg.Logger, producer); err != nil {
 			log.Warn("重新初始化 logger 失败，继续使用文件日志", zap.Error(err))
 		} else {
 			log = logger.GetLogger()
-			log.Info("Logger 已重新初始化，Kafka 日志输出已启用")
+			// 立即刷新日志，确保 console 输出能立即看到
+			if cfg.Logger.Console.Enabled {
+				_ = log.Sync() // 忽略错误，只是尝试刷新
+			}
+			log.Info("Logger 已重新初始化，Kafka 日志输出已启用",
+				zap.Bool("console日志", cfg.Logger.Console.Enabled))
 		}
 	}
 

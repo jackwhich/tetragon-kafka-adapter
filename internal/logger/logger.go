@@ -139,13 +139,16 @@ func Init(cfg *config.LoggerConfig, kafkaProducer *kafka.Producer) error {
 
 	// Console 输出（用于 K8s 调试，输出到 stdout）
 	if cfg.Console.Enabled {
+		// 使用 WriteSyncer 包装 stdout，确保日志立即刷新（不使用缓冲）
 		consoleCore := zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), enabler)
 		cores = append(cores, consoleCore)
 	}
 
 	// 如果没有配置任何输出，且没有 Kafka Producer，使用 no-op core（避免创建文件）
-	// 这样可以支持只配置 Kafka 输出的场景，在 Producer 创建前不输出日志
+	// 但是如果启用了 Console 输出，应该已经有 core 了，所以这里只处理完全没有输出的情况
 	if len(cores) == 0 {
+		// 如果启用了 Console 输出，应该已经有 core 了
+		// 这里只处理完全没有输出的情况（既没有 file/kafka，也没有 console）
 		// 使用 no-op core，不输出任何日志（避免文件权限问题）
 		// 当 Kafka Producer 创建后，会重新初始化 logger 并启用 Kafka 输出
 		noOpCore := zapcore.NewNopCore()
