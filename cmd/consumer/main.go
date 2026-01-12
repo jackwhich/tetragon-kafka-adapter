@@ -228,9 +228,17 @@ func main() {
 						zap.Stack("stack"))
 				}
 			}()
-			log.Info("健康检查服务器已启动", zap.Int("端口", cfg.Monitoring.HealthPort))
+			log.Info("健康检查服务器正在启动...", 
+				zap.Int("端口", cfg.Monitoring.HealthPort),
+				zap.String("地址", fmt.Sprintf(":%d", cfg.Monitoring.HealthPort)))
+			_ = log.Sync() // 立即刷新日志
 			if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Error("健康检查服务器错误", zap.Error(err))
+			} else {
+				log.Info("健康检查服务器已启动并监听", 
+					zap.Int("端口", cfg.Monitoring.HealthPort),
+					zap.Strings("路径", []string{"/health", "/ready"}))
+				_ = log.Sync() // 立即刷新日志
 			}
 		}()
 
@@ -258,8 +266,10 @@ func main() {
 			}
 		}()
 
-		// 等待健康检查服务器启动
-		time.Sleep(100 * time.Millisecond)
+		// 等待健康检查服务器启动（确保服务器已经监听端口）
+		log.Info("等待健康检查服务器启动...")
+		time.Sleep(500 * time.Millisecond) // 增加等待时间，确保服务器已启动
+		_ = log.Sync() // 立即刷新日志
 	}
 
 	// 启动 gRPC 事件读取器

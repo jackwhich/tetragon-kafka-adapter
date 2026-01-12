@@ -44,11 +44,14 @@ func NewServer(port int, q *queue.Queue, logger *zap.Logger) *Server {
 
 // Start 启动健康检查服务器
 func (s *Server) Start() error {
-	s.logger.Info("正在启动健康检查服务器", zap.String("地址", s.server.Addr))
+	s.logger.Info("正在启动健康检查服务器", 
+		zap.String("地址", s.server.Addr),
+		zap.Strings("端点", []string{"/health", "/ready"}))
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		s.logger.Error("健康检查服务器启动失败", zap.Error(err))
 		return err
 	}
+	s.logger.Info("健康检查服务器已成功启动并监听", zap.String("地址", s.server.Addr))
 	return nil
 }
 
