@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/cilium/tetragon/api/v1/tetragon"
-	"github.com/yourorg/tetragon-kafka-adapter/internal/schema/v1"
+	v1 "github.com/yourorg/tetragon-kafka-adapter/internal/schema/v1"
 	"go.uber.org/zap"
 )
 
@@ -31,9 +31,10 @@ func NewEventNormalizer(logger *zap.Logger) *EventNormalizer {
 }
 
 // Normalize 规范化事件
+// 简化版本：只做 Protobuf 转 JSON，不提取任何字段，保留完整原始数据
 func (n *EventNormalizer) Normalize(event *tetragon.GetEventsResponse) (*v1.EventSchema, error) {
 	eventType := detectEventType(event)
-	
+
 	schema := v1.NewEventSchema(eventType)
 	// 处理时间戳：从 *timestamppb.Timestamp 转换为 int64 (Unix 纳秒)
 	if event.GetTime() != nil {
@@ -41,35 +42,25 @@ func (n *EventNormalizer) Normalize(event *tetragon.GetEventsResponse) (*v1.Even
 		schema.SetTimestamp(timestamp)
 	}
 	schema.Node = getEventNode(event)
-	
-	// P0 修复：保留原始事件为 JSON（原始数据保全）
+
+	// 直接将整个 Protobuf 事件转换为 JSON（原始数据保全）
 	rawJSON, err := protojson.MarshalOptions{
 		UseProtoNames: true,
 	}.Marshal(event)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal raw event: %w", err)
 	}
-	
+
 	schema.Raw = json.RawMessage(rawJSON)
 	schema.RawMeta = &v1.RawMeta{
 		Format:    "json_map",
 		SizeBytes: len(rawJSON),
 		Redacted:  false,
 	}
-	
-	// 根据事件类型调用不同的规范化函数（提取常用字段，方便查询）
-	switch eventType {
-	case "process_exec":
-		return normalizeProcessExec(event, schema)
-	case "process_exit":
-		return normalizeProcessExit(event, schema)
-	case "process_kprobe":
-		return normalizeProcessKprobe(event, schema)
-	case "process_tracepoint":
-		return normalizeProcessTracepoint(event, schema)
-	default:
-		return normalizeUnknown(event, schema)
-	}
+
+	// 不再提取任何字段，所有数据都在 Raw 字段中
+	// Process, Network, K8s 等字段保持为 nil，由 Elasticsearch 从 Raw 中解析
+	return schema, nil
 }
 
 func detectEventType(event *tetragon.GetEventsResponse) string {
