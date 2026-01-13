@@ -526,11 +526,20 @@ func shouldLogDataTransform(traceID string, sampleRatio float64) bool {
 // processEvents 处理 gRPC 事件
 func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsResponse,
 	eventQueue *queue.Queue, sampler *queue.Sampler, log *zap.Logger) {
+	eventCount := 0
+	lastLogTime := time.Now()
+	
+	log.Info("事件处理循环已启动，等待接收 gRPC 事件...")
+	
 	for {
 		select {
 		case <-ctx.Done():
+			log.Info("事件处理循环收到停止信号",
+				zap.Int("已处理事件总数", eventCount))
 			return
 		case event := <-grpcEventCh:
+			eventCount++
+			
 			// 采样
 			if !sampler.ShouldSample(event) {
 				continue
@@ -539,6 +548,17 @@ func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsRe
 			// 优化：只调用一次 DetectEventType，避免重复调用
 			// 将事件类型附加到事件上，避免在 writeToKafka 中重复检测
 			eventType := router.DetectEventType(event)
+			
+			// 每处理 100 个事件或每 30 秒记录一次日志
+			now := time.Now()
+			if eventCount%100 == 0 || now.Sub(lastLogTime) >= 30*time.Second {
+				log.Info("正在处理事件",
+					zap.String("事件类型", eventType),
+					zap.Int("已处理事件数", eventCount),
+					zap.String("节点名", getEventNodeName(event)),
+					zap.Int("队列当前大小", eventQueue.Size()))
+				lastLogTime = now
+			}
 
 			// 入队
 			if err := eventQueue.Push(ctx, event); err != nil {
@@ -553,6 +573,13 @@ func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsRe
 						zap.String("事件类型", eventType),
 						zap.Error(err))
 				}
+			} else {
+				// 每 1000 个事件记录一次成功入队的日志
+				if eventCount%1000 == 0 {
+					log.Info("事件已成功入队",
+						zap.String("事件类型", eventType),
+						zap.Int("已处理事件数", eventCount))
+				}
 			}
 
 			// 更新指标（使用缓存的 eventType）
@@ -565,15 +592,24 @@ func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsRe
 // 性能优化：移除 default case，避免忙等待，使用阻塞的 Pop
 func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *normalize.EventNormalizer,
 	r *router.Router, writer *kafka.Writer, partitionKeyCfg *config.PartitionKeyConfig, schemaCfg *config.SchemaConfig, loggerCfg *config.LoggerConfig, log *zap.Logger) {
+	processedCount := 0
+	lastLogTime := time.Now()
+	
+	log.Info("Kafka 写入循环已启动，等待处理队列中的事件...")
+	
 	for {
 		event, err := eventQueue.Pop(ctx)
 		if err != nil {
 			if err == context.Canceled {
+				log.Info("Kafka 写入循环收到停止信号",
+					zap.Int("已处理事件总数", processedCount))
 				return
 			}
 			log.Error("从队列弹出事件失败", zap.Error(err))
 			continue
 		}
+		
+		processedCount++
 
 		// 记录处理开始时间（用于计算总处理延迟）
 		processingStart := time.Now()
@@ -740,10 +776,23 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 				zap.Error(err))
 		} else {
 			metrics.EventsOutTotal.WithLabelValues(topic, "success").Inc()
-			// 成功写入时使用 Debug 级别记录 trace ID（可选）
-			log.Debug("事件已写入 Kafka",
-				zap.String("主题", topic),
-				zap.String("trace_id", traceID))
+			
+			// 每处理 100 个事件或每 30 秒记录一次日志
+			now := time.Now()
+			if processedCount%100 == 0 || now.Sub(lastLogTime) >= 30*time.Second {
+				log.Info("事件已成功写入 Kafka",
+					zap.String("主题", topic),
+					zap.String("事件类型", schema.Type),
+					zap.String("节点名", schema.Node),
+					zap.Int("已处理事件数", processedCount),
+					zap.String("trace_id", traceID))
+				lastLogTime = now
+			} else {
+				// 其他成功写入使用 Debug 级别
+				log.Debug("事件已写入 Kafka",
+					zap.String("主题", topic),
+					zap.String("trace_id", traceID))
+			}
 		}
 
 		// 记录总处理延迟
