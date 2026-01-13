@@ -74,23 +74,19 @@ func normalizeProcessKprobe(event *tetragon.GetEventsResponse, schema *v1.EventS
 		}
 	}
 
-	// 提取网络连接信息（如果是网络相关的 kprobe）
-	if processKprobe.FunctionName == "tcp_connect" ||
-		processKprobe.FunctionName == "udp_sendmsg" ||
-		processKprobe.FunctionName == "inet_csk_accept" {
-		// 查找 sock 类型的参数
-		for _, arg := range processKprobe.Args {
-			if sockArg := arg.GetSockArg(); sockArg != nil {
-				schema.Network = &v1.NetworkInfo{
-					SourceIP:        sockArg.Saddr,
-					SourcePort:      sockArg.Sport,
-					DestinationIP:   sockArg.Daddr,
-					DestinationPort: sockArg.Dport,
-					Protocol:        sockArg.Protocol,
-					Family:          sockArg.Family,
-				}
-				break
+	// 提取网络连接信息（检查所有包含 sock_arg 的参数，不限制函数名）
+	// 这样可以处理所有包含网络信息的 kprobe 事件，如 __sk_free, tcp_connect, udp_sendmsg 等
+	for _, arg := range processKprobe.Args {
+		if sockArg := arg.GetSockArg(); sockArg != nil {
+			schema.Network = &v1.NetworkInfo{
+				SourceIP:        sockArg.Saddr,
+				SourcePort:      sockArg.Sport,
+				DestinationIP:   sockArg.Daddr,
+				DestinationPort: sockArg.Dport,
+				Protocol:        sockArg.Protocol,
+				Family:          sockArg.Family,
 			}
+			break // 找到第一个 sock_arg 就停止
 		}
 	}
 
