@@ -19,7 +19,6 @@ type EventSchema struct {
 	Process       *ProcessInfo           `json:"process,omitempty"`
 	Network       *NetworkInfo           `json:"network,omitempty"` // 网络连接信息
 	Labels        map[string]string      `json:"labels,omitempty"`
-	Raw           interface{}            `json:"raw,omitempty"`
 	Extra         map[string]interface{} `json:"extra,omitempty"`
 }
 

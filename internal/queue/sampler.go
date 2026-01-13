@@ -28,17 +28,21 @@ func NewSampler(cfg *config.StreamConfig) *Sampler {
 
 // ShouldSample 判断是否应该采样
 func (s *Sampler) ShouldSample(event *tetragon.GetEventsResponse) bool {
-	if s.config.SampleRatio >= 1.0 {
-		return true
-	}
-
 	eventType := router.DetectEventType(event)
 	
-	// 随机采样
-	if s.rand.Float64() < s.config.SampleRatio {
+	if s.config.SampleRatio >= 1.0 {
+		// 采样率为 1.0 或更高，所有事件都被采样
+		metrics.SampledTotal.WithLabelValues(eventType).Inc()
 		return true
 	}
 
-	metrics.SampledTotal.WithLabelValues(eventType).Inc()
+	// 随机采样
+	if s.rand.Float64() < s.config.SampleRatio {
+		// 事件被采样，递增指标
+		metrics.SampledTotal.WithLabelValues(eventType).Inc()
+		return true
+	}
+
+	// 未被采样
 	return false
 }

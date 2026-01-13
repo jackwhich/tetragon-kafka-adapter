@@ -30,11 +30,14 @@ func normalizeProcessExec(event *tetragon.GetEventsResponse, schema *v1.EventSch
 	if proc.GetUid() != nil {
 		schema.Process.UID = proc.GetUid().GetValue()
 	}
-	// Arguments 是 string 类型，需要转换为 []string
+	
+	// 保留原始 arguments 字符串（不要盲目拆分，避免语义混淆）
 	argsStr := proc.GetArguments()
 	if argsStr != "" {
-		// 简单分割，实际可能需要更复杂的解析
-		schema.Process.Args = []string{argsStr}
+		if schema.Extra == nil {
+			schema.Extra = make(map[string]interface{})
+		}
+		schema.Extra["arguments_raw"] = argsStr
 	}
 	
 	// 从 ProcessExec 获取 Parent
@@ -42,6 +45,27 @@ func normalizeProcessExec(event *tetragon.GetEventsResponse, schema *v1.EventSch
 		if parent.GetPid() != nil {
 			schema.Process.PPID = parent.GetPid().GetValue()
 		}
+		if parent.GetExecId() != "" {
+			if schema.Extra == nil {
+				schema.Extra = make(map[string]interface{})
+			}
+			schema.Extra["parent_exec_id"] = parent.GetExecId()
+		}
+	}
+	
+	// 抽取 exec_id、docker id 等便于索引（存到 Extra，不覆盖原始 Raw）
+	if proc.GetExecId() != "" {
+		if schema.Extra == nil {
+			schema.Extra = make(map[string]interface{})
+		}
+		schema.Extra["exec_id"] = proc.GetExecId()
+	}
+	// docker 字段是字符串类型，不是对象
+	if dockerID := proc.GetDocker(); dockerID != "" {
+		if schema.Extra == nil {
+			schema.Extra = make(map[string]interface{})
+		}
+		schema.Extra["docker_id"] = dockerID
 	}
 	
 	// GID 可能在 ProcessCredentials 中，暂时跳过

@@ -25,9 +25,14 @@ func normalizeProcessTracepoint(event *tetragon.GetEventsResponse, schema *v1.Ev
 		if proc.GetUid() != nil {
 			schema.Process.UID = proc.GetUid().GetValue()
 		}
+		
+		// 保留原始 arguments 字符串（不要盲目拆分，避免语义混淆）
 		argsStr := proc.GetArguments()
 		if argsStr != "" {
-			schema.Process.Args = []string{argsStr}
+			if schema.Extra == nil {
+				schema.Extra = make(map[string]interface{})
+			}
+			schema.Extra["arguments_raw"] = argsStr
 		}
 		
 		// 从 ProcessTracepoint 获取 Parent
@@ -35,6 +40,27 @@ func normalizeProcessTracepoint(event *tetragon.GetEventsResponse, schema *v1.Ev
 			if parent.GetPid() != nil {
 				schema.Process.PPID = parent.GetPid().GetValue()
 			}
+			if parent.GetExecId() != "" {
+				if schema.Extra == nil {
+					schema.Extra = make(map[string]interface{})
+				}
+				schema.Extra["parent_exec_id"] = parent.GetExecId()
+			}
+		}
+		
+		// 抽取 exec_id、docker id 等便于索引（存到 Extra，不覆盖原始 Raw）
+		if proc.GetExecId() != "" {
+			if schema.Extra == nil {
+				schema.Extra = make(map[string]interface{})
+			}
+			schema.Extra["exec_id"] = proc.GetExecId()
+		}
+		// docker 字段是字符串类型，不是对象
+		if dockerID := proc.GetDocker(); dockerID != "" {
+			if schema.Extra == nil {
+				schema.Extra = make(map[string]interface{})
+			}
+			schema.Extra["docker_id"] = dockerID
 		}
 
 		if pod := proc.GetPod(); pod != nil {
