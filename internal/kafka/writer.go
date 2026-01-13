@@ -212,7 +212,8 @@ func (w *Writer) flushBatch(ctx context.Context, batch []*Message) {
 		}
 		sentMessages[msgKey] = msg
 		
-		// P0 修复：非阻塞批量发送到 Input channel（AsyncProducer 会自动批量处理）
+		// P0 修复：阻塞发送到 Input channel（等待缓冲区有空间，避免消息丢失）
+		// 如果 channel 满了，会阻塞等待，直到有空间或 context 取消
 		select {
 		case w.asyncProducer.Input() <- producerMsg:
 			// 消息已发送到缓冲区，AsyncProducer 会自动批量处理
@@ -222,15 +223,11 @@ func (w *Writer) flushBatch(ctx context.Context, batch []*Message) {
 				zap.String("主题", topic),
 				zap.Int("已发送", len(sentMessages)),
 				zap.Int("批次大小", len(batch)))
+			// 将未发送的消息写入 DLQ
+			for _, remainingMsg := range batch[len(sentMessages):] {
+				w.writeToDLQ(flushCtx, remainingMsg, "context cancelled")
+			}
 			return
-		default:
-			// Input channel 已满，记录错误
-			metrics.KafkaErrorsTotal.WithLabelValues("send_message_buffer_full", msg.Topic).Inc()
-			w.logger.Error("Producer Input channel 已满，消息无法发送",
-				zap.String("主题", msg.Topic),
-				zap.String("trace_id", msg.TraceID))
-			// 写入 DLQ
-			w.writeToDLQ(flushCtx, msg, "producer buffer full")
 		}
 	}
 	
