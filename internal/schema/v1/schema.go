@@ -15,11 +15,22 @@ type EventSchema struct {
 	Timestamp     string                 `json:"ts"`
 	TraceID       string                 `json:"trace_id,omitempty"` // 追踪 ID，用于分布式追踪
 	Node          string                 `json:"node"`
+	// 原始数据保全（P0 修复）
+	Raw           json.RawMessage        `json:"raw,omitempty"`      // 原始事件的 JSON 表示
+	RawMeta       *RawMeta               `json:"raw_meta,omitempty"` // 原始数据元信息
 	K8s           *K8sInfo               `json:"k8s,omitempty"`
 	Process       *ProcessInfo           `json:"process,omitempty"`
 	Network       *NetworkInfo           `json:"network,omitempty"` // 网络连接信息
 	Labels        map[string]string      `json:"labels,omitempty"`
 	Extra         map[string]interface{} `json:"extra,omitempty"`
+}
+
+// RawMeta 原始数据元信息
+type RawMeta struct {
+	Format    string `json:"format"`        // "json_map" | "json_string" | "proto_base64"
+	SizeBytes int    `json:"size_bytes"`    // 原始数据大小
+	Hash      string `json:"hash,omitempty"` // SHA256 hash（可选）
+	Redacted  bool   `json:"redacted"`      // 是否已脱敏
 }
 
 // K8sInfo Kubernetes 信息

@@ -14,11 +14,12 @@ import (
 
 // Message 待写入的消息
 type Message struct {
-	Event   *tetragon.GetEventsResponse
-	Topic   string
-	Key     string
-	Value   []byte
-	TraceID string // 追踪 ID，用于日志追踪
+	Event     *tetragon.GetEventsResponse
+	EventType string // 事件类型（P1 修复：用于 Headers）
+	Topic     string
+	Key       string
+	Value     []byte
+	TraceID   string // 追踪 ID，用于日志追踪
 }
 
 // Writer Kafka 批量写入 Worker
@@ -167,7 +168,7 @@ func (w *Writer) flushBatch(ctx context.Context, batch []*Message) {
 	failedTraceIDs := make([]string, 0, 5)
 	
 	for _, msg := range batch {
-		if err := w.producer.SendMessage(flushCtx, msg.Topic, msg.Key, msg.Value); err != nil {
+		if err := w.producer.SendMessage(flushCtx, msg.Topic, msg.Key, msg.Value, msg.Event, msg.EventType); err != nil {
 			errorCount++
 			metrics.KafkaErrorsTotal.WithLabelValues("send_message", msg.Topic).Inc()
 			
@@ -218,29 +219,62 @@ func (w *Writer) flushBatch(ctx context.Context, batch []*Message) {
 	}
 }
 
-// writeToDLQ 写入死信队列
+// writeToDLQ 写入死信队列（P0 修复：添加重试机制）
 func (w *Writer) writeToDLQ(ctx context.Context, msg *Message, reason string) {
 	dlqTopic := w.router.GetDLQTopic()
 	
-	// 使用原始 Key
-	if err := w.producer.SendMessage(ctx, dlqTopic, msg.Key, msg.Value); err != nil {
-		w.logger.Error("写入死信队列失败",
-			zap.String("死信队列主题", dlqTopic),
-			zap.String("原始主题", msg.Topic),
-			zap.String("消息键", msg.Key),
-			zap.String("trace_id", msg.TraceID),
-			zap.String("失败原因", reason),
-			zap.Int("消息大小", len(msg.Value)),
-			zap.Error(err))
-	} else {
+	// P0 修复：添加重试机制，最多重试 3 次
+	maxRetries := 3
+	backoff := 100 * time.Millisecond
+	
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// 指数退避：100ms, 200ms, 400ms
+			select {
+			case <-ctx.Done():
+				w.logger.Warn("DLQ 重试被取消",
+					zap.String("trace_id", msg.TraceID),
+					zap.Int("尝试次数", attempt))
+				return
+			case <-time.After(backoff):
+				backoff *= 2
+			}
+		}
+		
+		if err := w.producer.SendMessage(ctx, dlqTopic, msg.Key, msg.Value, msg.Event, msg.EventType); err != nil {
+			if attempt == maxRetries-1 {
+				// 最后一次重试失败，记录错误
+				w.logger.Error("写入死信队列失败（已重试）",
+					zap.String("死信队列主题", dlqTopic),
+					zap.String("原始主题", msg.Topic),
+					zap.String("消息键", msg.Key),
+					zap.String("trace_id", msg.TraceID),
+					zap.String("失败原因", reason),
+					zap.Int("消息大小", len(msg.Value)),
+					zap.Int("重试次数", maxRetries),
+					zap.Error(err))
+				metrics.DLQWriteFailuresTotal.Inc()
+				// TODO: 可以考虑写入本地文件作为最后备份
+			} else {
+				w.logger.Warn("写入死信队列失败，将重试",
+					zap.String("trace_id", msg.TraceID),
+					zap.Int("尝试次数", attempt+1),
+					zap.Int("最大重试次数", maxRetries),
+					zap.Error(err))
+			}
+			continue
+		}
+		
+		// 成功写入
 		metrics.DLQEventsTotal.WithLabelValues(reason).Inc()
 		metrics.DLQEventsBytesTotal.Add(float64(len(msg.Value)))
-		// 优化：DLQ 写入成功使用 Info 级别，因为这是重要的操作
 		w.logger.Info("消息已写入死信队列",
 			zap.String("死信队列主题", dlqTopic),
 			zap.String("原始主题", msg.Topic),
 			zap.String("trace_id", msg.TraceID),
-			zap.String("失败原因", reason))
+			zap.String("失败原因", reason),
+			zap.Int("重试次数", attempt))
+		return
 	}
 }
 

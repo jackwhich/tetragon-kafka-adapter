@@ -3,6 +3,11 @@
 package normalize
 
 import (
+	"encoding/json"
+	"fmt"
+
+	"google.golang.org/protobuf/encoding/protojson"
+
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/schema/v1"
 	"go.uber.org/zap"
@@ -36,6 +41,21 @@ func (n *EventNormalizer) Normalize(event *tetragon.GetEventsResponse) (*v1.Even
 		schema.SetTimestamp(timestamp)
 	}
 	schema.Node = getEventNode(event)
+	
+	// P0 修复：保留原始事件为 JSON（原始数据保全）
+	rawJSON, err := protojson.MarshalOptions{
+		UseProtoNames: true,
+	}.Marshal(event)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal raw event: %w", err)
+	}
+	
+	schema.Raw = json.RawMessage(rawJSON)
+	schema.RawMeta = &v1.RawMeta{
+		Format:    "json_map",
+		SizeBytes: len(rawJSON),
+		Redacted:  false,
+	}
 	
 	// 根据事件类型调用不同的规范化函数（提取常用字段，方便查询）
 	switch eventType {

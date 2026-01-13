@@ -126,6 +126,13 @@ var (
 		},
 	)
 
+	DLQWriteFailuresTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "dlq_write_failures_total",
+			Help: "Total DLQ write failures after retries",
+		},
+	)
+
 	// 错误指标
 	KafkaErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

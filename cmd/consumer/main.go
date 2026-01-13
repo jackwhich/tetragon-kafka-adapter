@@ -589,11 +589,12 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 
 		// 写入 Kafka
 		msg := &kafka.Message{
-			Event:   event,
-			Topic:   topic,
-			Key:     key,
-			Value:   value,
-			TraceID: traceID, // 传递 trace ID 到 Message，用于 Writer 中的日志
+			Event:     event,
+			EventType: eventType, // P1 修复：传递事件类型用于 Headers
+			Topic:     topic,
+			Key:       key,
+			Value:     value,
+			TraceID:   traceID, // 传递 trace ID 到 Message，用于 Writer 中的日志
 		}
 
 		// 如果 writer 为 nil（Kafka 连接失败），跳过写入

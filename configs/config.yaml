@@ -29,7 +29,7 @@ kafka:
   client_id: "tetragon-consumer"
   acks: "all"  # all / 1 / 0
   compression: "snappy"  # none / gzip / snappy / lz4 / zstd
-  max_message_bytes: 1048576  # 1MB
+  max_message_bytes: 10485760  # 10MB (P0 修复：增加消息大小限制以支持大事件)
   batch:
     max_messages: 3000
     max_bytes: 1048576

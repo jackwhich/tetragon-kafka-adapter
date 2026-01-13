@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/metrics"
 	"go.uber.org/zap"
@@ -93,13 +94,34 @@ func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error)
 	return p, nil
 }
 
-// SendMessage 发送消息（使用去重 Key）
-func (p *Producer) SendMessage(ctx context.Context, topic string, key string, value []byte) error {
+// SendMessage 发送消息（P1 修复：添加 Headers 和正确的时间戳）
+func (p *Producer) SendMessage(ctx context.Context, topic string, key string, value []byte, event *tetragon.GetEventsResponse, eventType string) error {
+	// P1 修复：使用事件的实际时间戳
+	var msgTimestamp time.Time
+	if event != nil && event.GetTime() != nil {
+		msgTimestamp = event.GetTime().AsTime()
+	} else {
+		msgTimestamp = time.Now()
+	}
+
+	// P1 修复：添加消息 Headers
+	headers := []sarama.RecordHeader{
+		{Key: []byte("content-type"), Value: []byte("application/json")},
+		{Key: []byte("schema-version"), Value: []byte("1")},
+	}
+	if eventType != "" {
+		headers = append(headers, sarama.RecordHeader{
+			Key:   []byte("event-type"),
+			Value: []byte(eventType),
+		})
+	}
+
 	msg := &sarama.ProducerMessage{
-		Topic: topic,
-		Key:   sarama.StringEncoder(key),
-		Value: sarama.ByteEncoder(value),
-		Timestamp: time.Now(),
+		Topic:     topic,
+		Key:       sarama.StringEncoder(key),
+		Value:     sarama.ByteEncoder(value),
+		Timestamp: msgTimestamp,
+		Headers:   headers,
 	}
 
 	select {
