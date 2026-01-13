@@ -119,6 +119,17 @@ type LoggerConfig struct {
 	Console ConsoleLogConfig `mapstructure:"console"` // Console 输出配置（用于 K8s 调试）
 	File    FileLogConfig  `mapstructure:"file"`
 	Kafka   KafkaLogConfig `mapstructure:"kafka"`
+	// 数据转换日志配置（用于调试原始数据到 JSON 的转换）
+	DataTransform DataTransformLogConfig `mapstructure:"data_transform"`
+}
+
+// DataTransformLogConfig 数据转换日志配置
+type DataTransformLogConfig struct {
+	Enabled      bool   `mapstructure:"enabled"`       // 是否启用数据转换日志
+	SampleRatio  float64 `mapstructure:"sample_ratio"` // 采样率（0.0-1.0），例如 0.01 表示每 100 个事件记录 1 个
+	LogOriginal  bool   `mapstructure:"log_original"` // 是否记录原始事件 JSON
+	LogNormalized bool   `mapstructure:"log_normalized"` // 是否记录规范化后的 JSON
+	LogFinal     bool   `mapstructure:"log_final"`    // 是否记录最终发送到 Kafka 的 JSON
 }
 
 // FileLogConfig 文件日志配置
@@ -231,6 +242,13 @@ func DefaultConfig() *Config {
 			Kafka: KafkaLogConfig{
 				Enabled: false,
 				Topic:   "tetragon.logs",
+			},
+			DataTransform: DataTransformLogConfig{
+				Enabled:      false,  // 默认关闭，需要时手动开启
+				SampleRatio:  0.01,   // 默认采样率 1%（每 100 个事件记录 1 个）
+				LogOriginal:  true,   // 记录原始事件
+				LogNormalized: true,   // 记录规范化后的 JSON
+				LogFinal:     true,   // 记录最终发送到 Kafka 的 JSON
 			},
 		},
 		Monitoring: MonitoringConfig{

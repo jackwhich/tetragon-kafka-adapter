@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/grpc"
@@ -305,7 +307,7 @@ func main() {
 					zap.Stack("stack"))
 			}
 		}()
-		writeToKafka(ctx, eventQueue, normalizer, r, writer, &cfg.Routing.PartitionKey, &cfg.Schema, log)
+		writeToKafka(ctx, eventQueue, normalizer, r, writer, &cfg.Routing.PartitionKey, &cfg.Schema, &cfg.Logger, log)
 		log.Info("Kafka 写入循环已停止")
 	}()
 
@@ -489,6 +491,38 @@ func getEventNodeName(event *tetragon.GetEventsResponse) string {
 	return "unknown"
 }
 
+// getJSONPreview 获取 JSON 预览（前 N 个字符）
+func getJSONPreview(jsonBytes []byte, maxLen int) string {
+	if len(jsonBytes) <= maxLen {
+		return string(jsonBytes)
+	}
+	return string(jsonBytes[:maxLen]) + "..."
+}
+
+// isValidJSON 验证 JSON 格式是否有效
+func isValidJSON(jsonBytes []byte) bool {
+	var v interface{}
+	return json.Unmarshal(jsonBytes, &v) == nil
+}
+
+// shouldLogDataTransform 判断是否应该记录数据转换日志（基于采样率）
+func shouldLogDataTransform(traceID string, sampleRatio float64) bool {
+	if sampleRatio <= 0 {
+		return false
+	}
+	if sampleRatio >= 1.0 {
+		return true
+	}
+	// 使用 traceID 的哈希值进行采样，确保同一个事件总是被采样或不被采样
+	hash := 0
+	for _, c := range traceID {
+		hash = hash*31 + int(c)
+	}
+	// 将哈希值归一化到 [0, 1) 区间
+	normalized := float64(hash&0x7FFFFFFF) / float64(0x7FFFFFFF)
+	return normalized < sampleRatio
+}
+
 // processEvents 处理 gRPC 事件
 func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsResponse,
 	eventQueue *queue.Queue, sampler *queue.Sampler, log *zap.Logger) {
@@ -530,7 +564,7 @@ func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsRe
 // writeToKafka 写入 Kafka
 // 性能优化：移除 default case，避免忙等待，使用阻塞的 Pop
 func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *normalize.EventNormalizer,
-	r *router.Router, writer *kafka.Writer, partitionKeyCfg *config.PartitionKeyConfig, schemaCfg *config.SchemaConfig, log *zap.Logger) {
+	r *router.Router, writer *kafka.Writer, partitionKeyCfg *config.PartitionKeyConfig, schemaCfg *config.SchemaConfig, loggerCfg *config.LoggerConfig, log *zap.Logger) {
 	for {
 		event, err := eventQueue.Pop(ctx)
 		if err != nil {
@@ -544,11 +578,22 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 		// 记录处理开始时间（用于计算总处理延迟）
 		processingStart := time.Now()
 
-		// 规范化事件
-		normalizeStart := time.Now()
 		// 优化：复用 processEvents 中已检测的事件类型，避免重复调用
 		// 注意：如果 processEvents 中未检测，这里才检测（向后兼容）
 		eventType := router.DetectEventType(event)
+		
+		// 数据转换日志：记录原始事件（如果启用）
+		var originalJSON []byte
+		if loggerCfg.DataTransform.Enabled && loggerCfg.DataTransform.LogOriginal {
+			// 使用 protojson 将原始事件转换为 JSON
+			originalJSON, _ = protojson.MarshalOptions{
+				UseProtoNames: true,
+				Indent:        "  ", // 格式化输出，便于阅读
+			}.Marshal(event)
+		}
+
+		// 规范化事件
+		normalizeStart := time.Now()
 		schema, err := normalizer.Normalize(event)
 		if err != nil {
 			metrics.NormalizeErrorsTotal.WithLabelValues(eventType).Inc()
@@ -597,6 +642,54 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 				zap.String("格式", format),
 				zap.Error(serializeErr))
 			continue
+		}
+		
+		// 数据转换日志：记录数据转换过程（如果启用且满足采样条件）
+		if loggerCfg.DataTransform.Enabled {
+			// 使用简单的随机采样（基于 traceID 的哈希）
+			shouldLog := shouldLogDataTransform(traceID, loggerCfg.DataTransform.SampleRatio)
+			
+			if shouldLog {
+				// 记录规范化后的 JSON（如果启用）
+				var normalizedJSON []byte
+				if loggerCfg.DataTransform.LogNormalized {
+					normalizedJSON, _ = json.MarshalIndent(schema, "", "  ")
+				}
+				
+				// 记录最终发送到 Kafka 的 JSON（如果启用）
+				var finalJSON []byte
+				if loggerCfg.DataTransform.LogFinal && format == "json" {
+					finalJSON = value
+				}
+				
+				// 输出数据转换日志
+				logFields := []zap.Field{
+					zap.String("事件类型", eventType),
+					zap.String("trace_id", traceID),
+					zap.String("节点名", schema.Node),
+				}
+				
+				if loggerCfg.DataTransform.LogOriginal && len(originalJSON) > 0 {
+					logFields = append(logFields,
+						zap.String("原始事件JSON", string(originalJSON)),
+						zap.Int("原始事件大小", len(originalJSON)))
+				}
+				
+				if loggerCfg.DataTransform.LogNormalized && len(normalizedJSON) > 0 {
+					logFields = append(logFields,
+						zap.String("规范化后JSON", string(normalizedJSON)),
+						zap.Int("规范化后大小", len(normalizedJSON)))
+				}
+				
+				if loggerCfg.DataTransform.LogFinal && len(finalJSON) > 0 {
+					logFields = append(logFields,
+						zap.String("最终KafkaJSON", string(finalJSON)),
+						zap.Int("最终JSON大小", len(finalJSON)),
+						zap.Bool("JSON格式验证", isValidJSON(finalJSON)))
+				}
+				
+				log.Info("数据转换日志（原始→规范化→Kafka）", logFields...)
+			}
 		}
 		serializeLatency := time.Since(serializeStart).Milliseconds()
 		metrics.EventProcessingLatencyMs.WithLabelValues("serialize").Observe(float64(serializeLatency))

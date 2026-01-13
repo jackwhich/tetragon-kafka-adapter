@@ -94,6 +94,13 @@ logger:
   kafka:
     enabled: false  # 是否启用 Kafka 日志输出（开启后会自动禁用文件输出）
     topic: "tetragon-kafka-adapter-logs"  # Kafka 日志主题
+  # 数据转换日志配置（用于调试原始数据到 JSON 的转换）
+  data_transform:
+    enabled: false  # 是否启用数据转换日志（用于调试）
+    sample_ratio: 0.01  # 采样率（0.0-1.0），例如 0.01 表示每 100 个事件记录 1 个，避免日志洪水
+    log_original: true   # 是否记录原始事件 JSON（从 gRPC 接收到的原始 protobuf 转 JSON）
+    log_normalized: true # 是否记录规范化后的 JSON（EventSchema）
+    log_final: true      # 是否记录最终发送到 Kafka 的 JSON
 
 # 监控配置
 monitoring:

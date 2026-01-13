@@ -20,6 +20,8 @@ vendor/
 # Go workspace file
 go.work
 fix.md
+*.md
+CODE_ISSUES_ANALYSIS.md
 # IDE
 .idea/
 .vscode/
