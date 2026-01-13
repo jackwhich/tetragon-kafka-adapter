@@ -74,6 +74,7 @@ routing:
 schema:
   version: 1
   mode: "stable_json"  # stable_json / raw_string_fallback
+  format: "json"  # P1 修复：序列化格式 "json" | "protobuf"（protobuf 更小更快）
   include_raw: false  # 是否在 JSON 中包含原始 protobuf bytes
 
 # 日志配置

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/protobuf/proto"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/grpc"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/health"
@@ -304,7 +305,7 @@ func main() {
 					zap.Stack("stack"))
 			}
 		}()
-		writeToKafka(ctx, eventQueue, normalizer, r, writer, &cfg.Routing.PartitionKey, log)
+		writeToKafka(ctx, eventQueue, normalizer, r, writer, &cfg.Routing.PartitionKey, &cfg.Schema, log)
 		log.Info("Kafka 写入循环已停止")
 	}()
 
@@ -529,7 +530,7 @@ func processEvents(ctx context.Context, grpcEventCh <-chan *tetragon.GetEventsRe
 // writeToKafka 写入 Kafka
 // 性能优化：移除 default case，避免忙等待，使用阻塞的 Pop
 func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *normalize.EventNormalizer,
-	r *router.Router, writer *kafka.Writer, partitionKeyCfg *config.PartitionKeyConfig, log *zap.Logger) {
+	r *router.Router, writer *kafka.Writer, partitionKeyCfg *config.PartitionKeyConfig, schemaCfg *config.SchemaConfig, log *zap.Logger) {
 	for {
 		event, err := eventQueue.Pop(ctx)
 		if err != nil {
@@ -563,16 +564,38 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 		metrics.NormalizeLatencyMs.WithLabelValues(schema.Type).Observe(float64(normalizeLatency))
 		metrics.EventProcessingLatencyMs.WithLabelValues("normalize").Observe(float64(normalizeLatency))
 
-		// 序列化为 JSON
+		// P1 修复：根据配置选择序列化格式（JSON 或 Protobuf）
 		serializeStart := time.Now()
-		value, err := schema.ToJSON()
-		if err != nil {
+		var value []byte
+		var contentType string
+		
+		format := schemaCfg.Format
+		if format == "" {
+			format = "json" // 默认使用 JSON
+		}
+		
+		var serializeErr error
+		switch format {
+		case "protobuf":
+			// 使用原始事件的 protobuf bytes
+			value, serializeErr = proto.Marshal(event)
+			contentType = "application/protobuf"
+		case "json":
+			fallthrough
+		default:
+			// 使用 JSON 序列化
+			value, serializeErr = schema.ToJSON()
+			contentType = "application/json"
+		}
+		
+		if serializeErr != nil {
 			metrics.NormalizeErrorsTotal.WithLabelValues(schema.Type).Inc()
 			log.Error("序列化事件失败",
 				zap.String("事件类型", schema.Type),
 				zap.String("节点名", schema.Node),
 				zap.String("trace_id", traceID),
-				zap.Error(err))
+				zap.String("格式", format),
+				zap.Error(serializeErr))
 			continue
 		}
 		serializeLatency := time.Since(serializeStart).Milliseconds()
@@ -589,12 +612,13 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 
 		// 写入 Kafka
 		msg := &kafka.Message{
-			Event:     event,
-			EventType: eventType, // P1 修复：传递事件类型用于 Headers
-			Topic:     topic,
-			Key:       key,
-			Value:     value,
-			TraceID:   traceID, // 传递 trace ID 到 Message，用于 Writer 中的日志
+			Event:       event,
+			EventType:   eventType,   // P1 修复：传递事件类型用于 Headers
+			ContentType: contentType, // P1 修复：传递内容类型用于 Headers
+			Topic:       topic,
+			Key:         key,
+			Value:       value,
+			TraceID:     traceID, // 传递 trace ID 到 Message，用于 Writer 中的日志
 		}
 
 		// 如果 writer 为 nil（Kafka 连接失败），跳过写入

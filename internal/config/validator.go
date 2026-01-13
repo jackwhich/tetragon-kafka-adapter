@@ -115,6 +115,12 @@ func Validate(cfg *Config) error {
 	if !validSchemaModes[cfg.Schema.Mode] {
 		return fmt.Errorf("schema.mode must be one of: stable_json, raw_string_fallback")
 	}
+	
+	// P1 修复：验证 Schema 格式
+	validSchemaFormats := map[string]bool{"json": true, "protobuf": true}
+	if cfg.Schema.Format != "" && !validSchemaFormats[cfg.Schema.Format] {
+		return fmt.Errorf("schema.format must be one of: json, protobuf")
+	}
 
 	// 验证重连配置
 	if cfg.Tetragon.Stream.Reconnect.InitialBackoffSeconds <= 0 {

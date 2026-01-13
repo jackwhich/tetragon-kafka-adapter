@@ -2,9 +2,11 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/config"
 	"github.com/yourorg/tetragon-kafka-adapter/internal/metrics"
@@ -14,17 +16,19 @@ import (
 
 // Message 待写入的消息
 type Message struct {
-	Event     *tetragon.GetEventsResponse
-	EventType string // 事件类型（P1 修复：用于 Headers）
-	Topic     string
-	Key       string
-	Value     []byte
-	TraceID   string // 追踪 ID，用于日志追踪
+	Event       *tetragon.GetEventsResponse
+	EventType   string // 事件类型（P1 修复：用于 Headers）
+	ContentType string // P1 修复：内容类型（application/json 或 application/protobuf）
+	Topic       string
+	Key         string
+	Value       []byte
+	TraceID     string // 追踪 ID，用于日志追踪
 }
 
 // Writer Kafka 批量写入 Worker
 type Writer struct {
 	producer   *Producer
+	asyncProducer sarama.AsyncProducer // P0 修复：直接访问 AsyncProducer 以优化批量发送
 	router     *router.Router
 	config     *config.KafkaConfig
 	logger     *zap.Logger
@@ -37,12 +41,13 @@ type Writer struct {
 // NewWriter 创建新的 Writer
 func NewWriter(producer *Producer, r *router.Router, cfg *config.KafkaConfig, logger *zap.Logger) *Writer {
 	return &Writer{
-		producer:  producer,
-		router:    r,
-		config:    cfg,
-		logger:    logger,
-		workers:   cfg.WriterWorkers,
-		messageCh: make(chan *Message, cfg.Batch.MaxMessages*cfg.WriterWorkers),
+		producer:      producer,
+		asyncProducer: producer.GetAsyncProducer(), // P0 修复：直接访问 AsyncProducer 以优化批量发送
+		router:        r,
+		config:        cfg,
+		logger:        logger,
+		workers:       cfg.WriterWorkers,
+		messageCh:     make(chan *Message, cfg.Batch.MaxMessages*cfg.WriterWorkers),
 	}
 }
 
@@ -160,36 +165,82 @@ func (w *Writer) flushBatch(ctx context.Context, batch []*Message) {
 	flushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	
-	successCount := 0
-	errorCount := 0
 	topic := batch[0].Topic
 	
-	// 收集失败的 trace ID（最多记录前 5 个，避免日志过长）
-	failedTraceIDs := make([]string, 0, 5)
+	// P0 修复：批量发送优化 - 将所有消息发送到 AsyncProducer 的 Input channel
+	// AsyncProducer 会自动批量处理这些消息，提高吞吐量
+	sentMessages := make(map[string]*Message, len(batch)) // 用于跟踪已发送的消息
 	
 	for _, msg := range batch {
-		if err := w.producer.SendMessage(flushCtx, msg.Topic, msg.Key, msg.Value, msg.Event, msg.EventType); err != nil {
-			errorCount++
-			metrics.KafkaErrorsTotal.WithLabelValues("send_message", msg.Topic).Inc()
-			
-			// 收集失败的 trace ID（最多 5 个）
-			if len(failedTraceIDs) < 5 {
-				failedTraceIDs = append(failedTraceIDs, msg.TraceID)
-			}
-			
-			w.logger.Error("发送消息失败",
-				zap.String("主题", msg.Topic),
-				zap.String("消息键", msg.Key),
-				zap.String("trace_id", msg.TraceID),
-				zap.Int("批次大小", len(batch)),
-				zap.Error(err))
-			
-			// 写入 DLQ
-			w.writeToDLQ(flushCtx, msg, err.Error())
+		// 创建 ProducerMessage
+		var msgTimestamp time.Time
+		if msg.Event != nil && msg.Event.GetTime() != nil {
+			msgTimestamp = msg.Event.GetTime().AsTime()
 		} else {
-			successCount++
+			msgTimestamp = time.Now()
+		}
+		
+		// P1 修复：使用 Message 中的 ContentType
+		contentType := msg.ContentType
+		if contentType == "" {
+			contentType = "application/json" // 默认值
+		}
+		
+		headers := []sarama.RecordHeader{
+			{Key: []byte("content-type"), Value: []byte(contentType)},
+			{Key: []byte("schema-version"), Value: []byte("1")},
+		}
+		if msg.EventType != "" {
+			headers = append(headers, sarama.RecordHeader{
+				Key:   []byte("event-type"),
+				Value: []byte(msg.EventType),
+			})
+		}
+		
+		producerMsg := &sarama.ProducerMessage{
+			Topic:     msg.Topic,
+			Key:       sarama.StringEncoder(msg.Key),
+			Value:     sarama.ByteEncoder(msg.Value),
+			Timestamp: msgTimestamp,
+			Headers:   headers,
+		}
+		
+		// 使用 traceID 作为唯一标识，用于后续错误处理
+		msgKey := msg.TraceID
+		if msgKey == "" {
+			msgKey = fmt.Sprintf("%s:%s", msg.Topic, msg.Key)
+		}
+		sentMessages[msgKey] = msg
+		
+		// P0 修复：非阻塞批量发送到 Input channel（AsyncProducer 会自动批量处理）
+		select {
+		case w.asyncProducer.Input() <- producerMsg:
+			// 消息已发送到缓冲区，AsyncProducer 会自动批量处理
+		case <-flushCtx.Done():
+			// Context 已取消，记录未发送的消息
+			w.logger.Warn("批次发送被取消",
+				zap.String("主题", topic),
+				zap.Int("已发送", len(sentMessages)),
+				zap.Int("批次大小", len(batch)))
+			return
+		default:
+			// Input channel 已满，记录错误
+			metrics.KafkaErrorsTotal.WithLabelValues("send_message_buffer_full", msg.Topic).Inc()
+			w.logger.Error("Producer Input channel 已满，消息无法发送",
+				zap.String("主题", msg.Topic),
+				zap.String("trace_id", msg.TraceID))
+			// 写入 DLQ
+			w.writeToDLQ(flushCtx, msg, "producer buffer full")
 		}
 	}
+	
+	// P0 修复：由于 AsyncProducer 是异步批量处理的，我们无法在这里直接获取每个消息的结果
+	// 错误和成功会通过 Producer 的 handleErrors 和 handleSuccesses 异步处理
+	// 这里我们假设所有成功发送到 Input channel 的消息都会被处理
+	// 实际的错误统计通过 metrics 和异步错误处理来完成
+	successCount := len(sentMessages) // 成功发送到缓冲区的消息数
+	errorCount := 0 // 错误通过异步处理统计
+	failedTraceIDs := make([]string, 0, 5)
 
 	latency := time.Since(start).Milliseconds()
 	// 安全处理：确保批次不为空
@@ -241,7 +292,7 @@ func (w *Writer) writeToDLQ(ctx context.Context, msg *Message, reason string) {
 			}
 		}
 		
-		if err := w.producer.SendMessage(ctx, dlqTopic, msg.Key, msg.Value, msg.Event, msg.EventType); err != nil {
+		if err := w.producer.SendMessage(ctx, dlqTopic, msg.Key, msg.Value, msg.Event, msg.EventType, msg.ContentType); err != nil {
 			if attempt == maxRetries-1 {
 				// 最后一次重试失败，记录错误
 				w.logger.Error("写入死信队列失败（已重试）",

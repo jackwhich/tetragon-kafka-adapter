@@ -117,8 +117,8 @@ func (kc *KafkaCore) flushBatch(batch [][]byte) {
 	
 	for _, logData := range batch {
 		// 发送到 Kafka（非阻塞，如果失败会被 producer 的错误处理机制捕获）
-		// 日志消息不需要 event 和 eventType，传入 nil 和空字符串
-		_ = kc.producer.SendMessage(ctx, kc.topic, key, logData, nil, "")
+		// 日志消息不需要 event、eventType 和 contentType，传入 nil 和空字符串
+		_ = kc.producer.SendMessage(ctx, kc.topic, key, logData, nil, "", "application/json")
 	}
 }
 

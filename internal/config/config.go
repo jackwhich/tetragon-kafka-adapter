@@ -107,6 +107,7 @@ type PartitionKeyConfig struct {
 type SchemaConfig struct {
 	Version    int    `mapstructure:"version"`
 	Mode       string `mapstructure:"mode"`
+	Format     string `mapstructure:"format"` // P1 修复：序列化格式 "json" | "protobuf"
 	IncludeRaw bool   `mapstructure:"include_raw"`
 }
 
@@ -211,6 +212,7 @@ func DefaultConfig() *Config {
 		Schema: SchemaConfig{
 			Version:    1,
 			Mode:       "stable_json",
+			Format:     "json", // P1 修复：默认使用 JSON
 			IncludeRaw: false,
 		},
 		Logger: LoggerConfig{

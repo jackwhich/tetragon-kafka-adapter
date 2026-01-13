@@ -23,6 +23,11 @@ type Producer struct {
 	wg       sync.WaitGroup
 }
 
+// GetAsyncProducer 获取 AsyncProducer（P0 修复：用于批量发送优化）
+func (p *Producer) GetAsyncProducer() sarama.AsyncProducer {
+	return p.producer
+}
+
 // NewProducer 创建新的 Producer
 func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error) {
 	saramaConfig := sarama.NewConfig()
@@ -95,7 +100,7 @@ func NewProducer(cfg *config.KafkaConfig, logger *zap.Logger) (*Producer, error)
 }
 
 // SendMessage 发送消息（P1 修复：添加 Headers 和正确的时间戳）
-func (p *Producer) SendMessage(ctx context.Context, topic string, key string, value []byte, event *tetragon.GetEventsResponse, eventType string) error {
+func (p *Producer) SendMessage(ctx context.Context, topic string, key string, value []byte, event *tetragon.GetEventsResponse, eventType string, contentType string) error {
 	// P1 修复：使用事件的实际时间戳
 	var msgTimestamp time.Time
 	if event != nil && event.GetTime() != nil {
@@ -104,9 +109,12 @@ func (p *Producer) SendMessage(ctx context.Context, topic string, key string, va
 		msgTimestamp = time.Now()
 	}
 
-	// P1 修复：添加消息 Headers
+	// P1 修复：添加消息 Headers（使用传入的 contentType）
+	if contentType == "" {
+		contentType = "application/json" // 默认值
+	}
 	headers := []sarama.RecordHeader{
-		{Key: []byte("content-type"), Value: []byte("application/json")},
+		{Key: []byte("content-type"), Value: []byte(contentType)},
 		{Key: []byte("schema-version"), Value: []byte("1")},
 	}
 	if eventType != "" {
