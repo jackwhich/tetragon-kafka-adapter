@@ -628,8 +628,14 @@ func writeToKafka(ctx context.Context, eventQueue *queue.Queue, normalizer *norm
 		case "json":
 			fallthrough
 		default:
-			// 使用 JSON 序列化
-			value, serializeErr = schema.ToJSON()
+			// 直接发送原始事件的 JSON（Raw 字段的内容），而不是包装的 EventSchema
+			// 这样 Kafka 控制台可以直接查看原始事件，Logstash 也能正确解析
+			if schema.Raw != nil && len(schema.Raw) > 0 {
+				value = schema.Raw
+			} else {
+				// 如果 Raw 为空，回退到 EventSchema 格式
+				value, serializeErr = schema.ToJSON()
+			}
 			contentType = "application/json"
 		}
 		
